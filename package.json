@@ -1,0 +1,19 @@
+{
+  "name": "k8s-local-dashboard",
+  "version": "1.0.0",
+  "description": "Offline local Kubernetes dashboard with an AI-powered investigation assistant (root-cause analysis). Uses your local kubeconfig via kubectl. Zero npm dependencies.",
+  "private": true,
+  "bin": {
+    "k8s-dashboard": "server.js"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "stop": "node scripts/stop.js",
+    "restart": "node scripts/stop.js && node server.js",
+    "package": "node scripts/package.js"
+  },
+  "engines": {
+    "node": ">=16"
+  }
+}
