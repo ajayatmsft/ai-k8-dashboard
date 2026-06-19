@@ -21,7 +21,8 @@ searchable history.
 
 - **Tool-gated by design** — the AI never talks to Kubernetes directly. It can
   only call approved, validated tools (`getPods`, `getEvents`, `getLogs`,
-  `getPodMetrics`, …). The backend executes them and feeds results back.
+  `getPodMetrics`, `getHelmReleases`, `getClusterAddons`, `getServiceAccounts`,
+  `getPodIdentities`, …). The backend executes them and feeds results back.
 - **Works offline too** — with no AI key configured, a built-in heuristic engine
   still diagnoses the common failure modes (CrashLoopBackOff, OOMKilled,
   ImagePullBackOff, failed probes, resource exhaustion, DB/connectivity errors).
@@ -34,6 +35,23 @@ searchable history.
   CPU/memory usage** (via `kubectl top`, shown when metrics-server is present).
 - **Deployments** – ready/available replicas, images, age.
 - **Pods** – phase, ready, restarts, node, IP, age.
+- **⎈ Helm** – every **Helm release** in the cluster (name, namespace, revision,
+  status, chart, app version, last deployed). Uses the `helm` binary when it's
+  on PATH (then exposes per-release **status / history / values**); otherwise it
+  decodes the `helm.sh/release.v1` Secrets directly so it still works **without
+  helm installed**.
+- **Add-ons** – auto-detects **cluster add-ons / operators** (ingress,
+  cert-manager, service mesh, CNI, observability, policy, identity, CSI drivers,
+  GitOps…) by correlating installed **CRD API groups** with **system-namespace
+  workloads**, plus a raw list of both for full visibility.
+- **Identities** – **managed identities attached to pods**: Azure **Workload
+  Identity** (annotated service accounts + pods opting in via
+  `azure.workload.identity/use`) and legacy **AAD Pod Identity** (`AzureIdentity`
+  CRDs + `aadpodidbinding` labels). Also surfaces AWS IRSA role ARNs and GCP
+  Workload Identity annotations.
+- **Service Accounts** – every service account with token **automount** setting,
+  attached secrets, and any **cloud identity** annotation (Azure client-id, AWS
+  role ARN, GCP service account).
 - **Secrets** – list keys, open one to **reveal decoded values** or view YAML.
 - **Events** – cluster events, warnings highlighted, newest first.
 - **Describe / YAML** – one click on any deployment or pod.
@@ -101,6 +119,7 @@ Or double-click **`start.cmd`**. Then open <http://127.0.0.1:7575>.
 | `PORT`         | `7575`        | Port to listen on                                |
 | `HOST`         | `127.0.0.1`   | Bind address (localhost only by default)         |
 | `KUBECTL_PATH` | `kubectl`     | Full path to the kubectl binary                  |
+| `HELM_PATH`    | `helm`        | Full path to the helm binary (optional)          |
 | `READ_ONLY`    | `0`           | Set `1` to disable all mutating actions          |
 
 #### AI Assistant configuration

@@ -267,6 +267,147 @@ const views = {
     c.appendChild(table);
   },
 
+  async helm() {
+    const { items, source, error } = await api('helm', { ns: state.ns });
+    const c = content();
+    c.innerHTML = '';
+    c.appendChild(toolbar('Filter releases…', 'helmTable'));
+    const note = source === 'helm'
+      ? 'Source: helm binary'
+      : source === 'secrets'
+        ? 'Source: helm release secrets (helm binary not found — install helm for chart/values detail)'
+        : 'Helm releases could not be listed';
+    c.appendChild(el('div', { class: 'muted', style: 'margin:4px 0 8px' }, note + (error ? ' — ' + error : '')));
+    if (!items.length) { c.appendChild(el('div', { class: 'empty' }, 'No Helm releases found')); return; }
+    const statusPill = (s) => {
+      const map = { deployed: 'green', superseded: 'gray', failed: 'red', 'pending-install': 'yellow', 'pending-upgrade': 'yellow', uninstalling: 'yellow' };
+      return `<span class="pill ${map[String(s).toLowerCase()] || 'gray'}">${esc(s || '?')}</span>`;
+    };
+    const rows = items.map((r) => `<tr>
+      <td class="mono">${esc(r.namespace)}</td>
+      <td class="mono">${esc(r.name)}</td>
+      <td>${statusPill(r.status)}</td>
+      <td>${esc(r.revision)}</td>
+      <td>${r.chart ? `<span class="tag">${esc(r.chart)}</span>` : '<span class="muted">—</span>'}</td>
+      <td class="mono">${esc(r.appVersion || '—')}</td>
+      <td class="mono">${esc(r.updated ? new Date(r.updated).toLocaleString() : '')}</td>
+      <td class="row-actions">
+        <button data-act="helm-detail" data-ns="${esc(r.namespace)}" data-name="${esc(r.name)}">Details</button>
+      </td></tr>`).join('');
+    const table = el('table', { id: 'helmTable', html: `<thead><tr><th>Namespace</th><th>Release</th><th>Status</th><th>Rev</th><th>Chart</th><th>App ver</th><th>Updated</th><th></th></tr></thead><tbody>${rows}</tbody>` });
+    table.addEventListener('click', onTableAction);
+    c.appendChild(table);
+  },
+
+  async addons() {
+    const { detected, crdGroups, systemWorkloads } = await api('addons');
+    const c = content();
+    c.innerHTML = '';
+
+    c.appendChild(el('h3', {}, 'Detected add-ons'));
+    if (!detected.length) {
+      c.appendChild(el('div', { class: 'empty' }, 'No well-known add-ons detected'));
+    } else {
+      const cards = el('div', { class: 'cards' });
+      for (const a of detected) {
+        cards.appendChild(el('div', { class: 'card' }, [
+          el('div', { class: 'label' }, a.category),
+          el('div', { class: 'value', style: 'font-size:1rem' }, a.name),
+          el('div', { class: 'muted', style: 'font-size:.75rem;margin-top:4px' }, (a.evidence || []).join(' · ')),
+        ]));
+      }
+      c.appendChild(cards);
+    }
+
+    c.appendChild(el('h3', {}, `System workloads (${systemWorkloads.length})`));
+    if (systemWorkloads.length) {
+      const rows = systemWorkloads.map((w) => `<tr>
+        <td class="mono">${esc(w.kind)}</td>
+        <td class="mono">${esc(w.namespace)}</td>
+        <td class="mono">${esc(w.name)}</td>
+        <td>${(w.images || []).map((i) => `<span class="tag">${esc(i)}</span>`).join('')}</td></tr>`).join('');
+      c.appendChild(el('table', { id: 'addonWlTable', html: `<thead><tr><th>Kind</th><th>Namespace</th><th>Name</th><th>Images</th></tr></thead><tbody>${rows}</tbody>` }));
+    }
+
+    c.appendChild(el('h3', {}, `Installed CRD API groups (${crdGroups.length})`));
+    if (crdGroups.length) {
+      const rows = crdGroups.map((g) => `<tr><td class="mono">${esc(g.group)}</td><td>${g.count}</td></tr>`).join('');
+      c.appendChild(el('table', { html: `<thead><tr><th>API group</th><th>CRDs</th></tr></thead><tbody>${rows}</tbody>` }));
+    } else {
+      c.appendChild(el('div', { class: 'muted' }, 'No custom resource definitions found.'));
+    }
+  },
+
+  async identities() {
+    const data = await api('identities', { ns: state.ns });
+    const c = content();
+    c.innerHTML = '';
+
+    c.appendChild(el('h3', {}, `Pods using a managed identity (${data.workloadIdentity.length})`));
+    if (data.workloadIdentity.length) {
+      const rows = data.workloadIdentity.map((w) => `<tr>
+        <td class="mono">${esc(w.namespace)}</td>
+        <td class="mono">${esc(w.pod)}</td>
+        <td class="mono">${esc(w.serviceAccount)}</td>
+        <td>${w.usesWorkloadIdentity ? '<span class="pill green">workload-identity</span>' : '<span class="muted">—</span>'}</td>
+        <td class="mono">${w.identity ? esc(w.identity.azureClientId || w.identity.awsRoleArn || w.identity.gcpServiceAccount || JSON.stringify(w.identity)) : '<span class="muted">—</span>'}</td></tr>`).join('');
+      c.appendChild(el('table', { html: `<thead><tr><th>Namespace</th><th>Pod</th><th>ServiceAccount</th><th>Workload Identity</th><th>Identity</th></tr></thead><tbody>${rows}</tbody>` }));
+    } else {
+      c.appendChild(el('div', { class: 'empty' }, 'No pods with managed identities detected'));
+    }
+
+    c.appendChild(el('h3', {}, `Service accounts with cloud identity (${data.serviceAccountsWithIdentity.length})`));
+    if (data.serviceAccountsWithIdentity.length) {
+      const rows = data.serviceAccountsWithIdentity.map((s) => `<tr>
+        <td class="mono">${esc(s.namespace)}</td>
+        <td class="mono">${esc(s.name)}</td>
+        <td class="mono">${esc(Object.entries(s.identity).map(([k, v]) => `${k}=${v}`).join('  '))}</td></tr>`).join('');
+      c.appendChild(el('table', { html: `<thead><tr><th>Namespace</th><th>ServiceAccount</th><th>Identity annotations</th></tr></thead><tbody>${rows}</tbody>` }));
+    } else {
+      c.appendChild(el('div', { class: 'muted' }, 'No service accounts annotated with a cloud identity.'));
+    }
+
+    if ((data.azureIdentities || []).length) {
+      c.appendChild(el('h3', {}, `AzureIdentity resources (AAD Pod Identity) (${data.azureIdentities.length})`));
+      const rows = data.azureIdentities.map((a) => `<tr>
+        <td class="mono">${esc(a.namespace)}</td>
+        <td class="mono">${esc(a.name)}</td>
+        <td class="mono">${esc(a.clientId || '')}</td>
+        <td class="mono">${esc(a.type === 0 ? 'UserAssignedMSI' : a.type === 1 ? 'ServicePrincipal' : (a.type ?? ''))}</td></tr>`).join('');
+      c.appendChild(el('table', { html: `<thead><tr><th>Namespace</th><th>Name</th><th>Client ID</th><th>Type</th></tr></thead><tbody>${rows}</tbody>` }));
+    }
+
+    if ((data.podIdentityBindings || []).length) {
+      c.appendChild(el('h3', {}, `Pods bound via aadpodidbinding (${data.podIdentityBindings.length})`));
+      const rows = data.podIdentityBindings.map((b) => `<tr>
+        <td class="mono">${esc(b.namespace)}</td>
+        <td class="mono">${esc(b.pod)}</td>
+        <td class="mono">${esc(b.binding)}</td></tr>`).join('');
+      c.appendChild(el('table', { html: `<thead><tr><th>Namespace</th><th>Pod</th><th>Binding</th></tr></thead><tbody>${rows}</tbody>` }));
+    }
+  },
+
+  async serviceaccounts() {
+    const { items } = await api('serviceAccounts', { ns: state.ns });
+    const c = content();
+    c.innerHTML = '';
+    c.appendChild(toolbar('Filter service accounts…', 'saTable'));
+    if (!items.length) { c.appendChild(el('div', { class: 'empty' }, 'No service accounts')); return; }
+    const rows = items.map((s) => {
+      const idStr = s.hasIdentity ? Object.entries(s.identity).map(([k, v]) => `${k}=${v}`).join('  ') : '';
+      return `<tr>
+        <td class="mono">${esc(s.namespace)}</td>
+        <td class="mono">${esc(s.name)}</td>
+        <td>${s.hasIdentity ? `<span class="pill green" title="${esc(idStr)}">linked</span>` : '<span class="muted">—</span>'}</td>
+        <td class="mono">${esc(idStr || '')}</td>
+        <td>${s.automount ? '<span class="pill yellow">on</span>' : '<span class="pill gray">off</span>'}</td>
+        <td>${(s.secrets || []).map((k) => `<span class="tag">${esc(k)}</span>`).join('') || '<span class="muted">—</span>'}</td>
+        <td>${esc(s.age)}</td></tr>`;
+    }).join('');
+    const table = el('table', { id: 'saTable', html: `<thead><tr><th>Namespace</th><th>Name</th><th>Identity</th><th>Annotations</th><th>Automount</th><th>Secrets</th><th>Age</th></tr></thead><tbody>${rows}</tbody>` });
+    c.appendChild(table);
+  },
+
   async logs() {
     const c = content();
     c.innerHTML = '';
@@ -812,6 +953,7 @@ async function onTableAction(e) {
   if (act === 'scale') return doScale(ns, name, replicas);
   if (act === 'delete-pod') return doDeletePod(ns, name);
   if (act === 'exec') return openExec(ns, name, (containers || '').split(',').filter(Boolean));
+  if (act === 'helm-detail') return openHelmDetail(ns, name);
   if (act === 'logs-pod') {
     logCtx.ns = ns; logCtx.pod = name; logCtx.container = ''; logCtx.search = '';
     switchTab('logs'); return;
@@ -980,6 +1122,47 @@ function openSecret(ns, name) {
     YAML: async () => preFrom((await api('manifest', { type: 'secret', ns, name })).text),
   });
 }
+function openHelmDetail(ns, name) {
+  openModal(`helm release ${ns}/${name}`, {
+    Overview: async () => {
+      const r = await api('helmRelease', { ns, name });
+      const wrap = el('div', {});
+      if (r.error && !r.helmAvailable) {
+        wrap.appendChild(el('div', { class: 'muted', style: 'margin-bottom:8px' }, 'The helm binary is not installed on the dashboard host, so detailed status/values are unavailable. Set HELM_PATH or install helm to enable this.'));
+      }
+      const s = r.status || {};
+      const info = s.info || {};
+      const grid = el('div', { class: 'kv' });
+      const add = (k, v) => { grid.appendChild(el('div', { class: 'k' }, k)); grid.appendChild(el('div', { class: 'v mono' }, v == null ? '—' : String(v))); };
+      add('Name', r.name);
+      add('Namespace', r.namespace);
+      add('Status', info.status);
+      add('Revision', s.version);
+      add('Last deployed', info.last_deployed);
+      if (s.chart && s.chart.metadata) { add('Chart', `${s.chart.metadata.name}-${s.chart.metadata.version}`); add('App version', s.chart.metadata.appVersion); }
+      wrap.appendChild(grid);
+      if (info.notes) wrap.appendChild(el('pre', { style: 'margin-top:10px' }, info.notes));
+      return wrap;
+    },
+    History: async () => {
+      const r = await api('helmRelease', { ns, name });
+      if (!r.history || !r.history.length) return el('div', { class: 'muted' }, 'No history available (requires the helm binary).');
+      const rows = r.history.map((h) => `<tr>
+        <td>${esc(h.revision)}</td>
+        <td>${esc(h.status)}</td>
+        <td class="mono">${esc(h.chart || '')}</td>
+        <td class="mono">${esc(h.app_version || '')}</td>
+        <td class="mono">${esc(h.updated || '')}</td>
+        <td>${esc(h.description || '')}</td></tr>`).join('');
+      return el('table', { html: `<thead><tr><th>Rev</th><th>Status</th><th>Chart</th><th>App ver</th><th>Updated</th><th>Description</th></tr></thead><tbody>${rows}</tbody>` });
+    },
+    Values: async () => {
+      const r = await api('helmRelease', { ns, name });
+      return preFrom(r.values || '(no user-supplied values, or helm binary unavailable)');
+    },
+  });
+}
+
 function openExec(ns, name, containers) {
   if (state.readOnly) { toast('READ-ONLY mode: debug disabled', 'err'); return; }
   openModal(`debug ${ns}/${name}`, {

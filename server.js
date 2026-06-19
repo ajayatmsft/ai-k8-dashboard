@@ -21,6 +21,7 @@ const http = require('http');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const zlib = require('zlib');
 const { execFile, spawn } = require('child_process');
 const url = require('url');
 const readline = require('readline');
@@ -28,6 +29,7 @@ const readline = require('readline');
 const HOST = process.env.HOST || '127.0.0.1';
 const PORT = parseInt(process.env.PORT || '7575', 10);
 const KUBECTL = process.env.KUBECTL_PATH || 'kubectl';
+const HELM = process.env.HELM_PATH || 'helm';
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const SETTINGS_FILE = path.join(__dirname, 'settings.json');
 const AUDIT_FILE = path.join(__dirname, 'audit.log');
@@ -114,6 +116,31 @@ function kubectl(args, { timeout } = {}) {
 }
 async function kubectlJSON(args) { return JSON.parse(await kubectl(args)); }
 
+// Optional `helm` binary runner (mirrors kubectl context/kubeconfig flags).
+// Helm honours the same --kubeconfig/--kube-context style flags; we pass the
+// kubeconfig/context selected in the UI so it targets the same cluster.
+function helm(args, { timeout } = {}) {
+  const s = loadSettings();
+  const full = [];
+  if (s.kubeconfig) full.push('--kubeconfig', s.kubeconfig);
+  if (s.context) full.push('--kube-context', s.context);
+  full.push(...args);
+  return new Promise((resolve, reject) => {
+    execFile(
+      HELM, full,
+      { maxBuffer: MAX_BUFFER, timeout: timeout || KUBECTL_TIMEOUT, windowsHide: true },
+      (err, stdout, stderr) => {
+        if (err) {
+          const e = new Error((stderr || err.message || '').trim());
+          e.code = err.code; e.stderr = stderr; e.notFound = err.code === 'ENOENT';
+          return reject(e);
+        }
+        resolve(stdout);
+      }
+    );
+  });
+}
+
 // kubectl that ignores global context (used when probing a specific kubeconfig)
 function kubectlRaw(args, extraGlobal = [], { timeout } = {}) {
   const full = [...extraGlobal, ...args];
@@ -190,6 +217,249 @@ async function resolvePods({ ns, selector, regex }) {
       containers: ((p.spec && p.spec.containers) || []).map((c) => c.name),
       phase: p.status && p.status.phase,
     }));
+}
+
+// --- Helm release discovery -------------------------------------------------
+
+// Helm v3 stores each release as a Secret of type `helm.sh/release.v1`. The
+// `release` field is base64(gzip(json)) — and kubectl returns secret values
+// base64-encoded again, so we decode twice then gunzip.
+function decodeHelmRelease(secretValue) {
+  try {
+    const once = Buffer.from(secretValue, 'base64');           // -> base64(gzip(json)) text
+    const gz = Buffer.from(once.toString('utf8'), 'base64');   // -> gzip bytes
+    return JSON.parse(zlib.gunzipSync(gz).toString('utf8'));
+  } catch (_) { return null; }
+}
+
+// List Helm releases. Prefers the `helm` binary (richer: chart, appVersion);
+// falls back to reading helm release Secrets directly with kubectl so it keeps
+// working fully offline / when helm isn't installed.
+async function listHelmReleases({ ns } = {}) {
+  // 1) Try the helm binary.
+  try {
+    const args = ['list', '-o', 'json'];
+    if (!ns || ns === '_all') args.push('--all-namespaces'); else args.push('-n', ns);
+    const out = await helm(args);
+    const arr = JSON.parse(out || '[]');
+    return {
+      source: 'helm',
+      items: arr.map((r) => ({
+        name: r.name, namespace: r.namespace, revision: parseInt(r.revision, 10) || r.revision,
+        status: r.status, chart: r.chart, appVersion: r.app_version, updated: r.updated,
+      })),
+    };
+  } catch (e) {
+    // Fall through to the kubectl-based discovery on any helm error.
+  }
+
+  // 2) Fallback: read helm release secrets (label owner=helm).
+  const args = ['get', 'secrets', ...nsArgs(ns), '-l', 'owner=helm', '-o', 'json'];
+  let data;
+  try { data = await kubectlJSON(args); }
+  catch (e) { return { source: 'none', error: e.message, items: [] }; }
+
+  // Keep only the latest revision per (namespace, release name).
+  const latest = new Map();
+  for (const s of data.items || []) {
+    const labels = (s.metadata && s.metadata.labels) || {};
+    if (labels.owner !== 'helm') continue;
+    const relName = labels.name;
+    const rev = parseInt(labels.version, 10) || 0;
+    const key = `${s.metadata.namespace}/${relName}`;
+    const prev = latest.get(key);
+    if (!prev || rev >= prev._rev) latest.set(key, { secret: s, labels, _rev: rev });
+  }
+
+  const items = [...latest.values()].map(({ secret, labels, _rev }) => {
+    const rel = decodeHelmRelease((secret.data && secret.data.release) || '');
+    const chart = rel && rel.chart && rel.chart.metadata
+      ? `${rel.chart.metadata.name}-${rel.chart.metadata.version}` : null;
+    return {
+      name: labels.name, namespace: secret.metadata.namespace, revision: _rev,
+      status: (rel && rel.info && rel.info.status) || labels.status,
+      chart, appVersion: rel && rel.chart && rel.chart.metadata && rel.chart.metadata.appVersion,
+      updated: (rel && rel.info && rel.info.last_deployed) || secret.metadata.creationTimestamp,
+    };
+  }).sort((a, b) => (a.namespace + a.name).localeCompare(b.namespace + b.name));
+
+  return { source: 'secrets', items };
+}
+
+// --- Cluster add-on detection -----------------------------------------------
+
+// Signatures for well-known cluster add-ons. We match against CRD API groups,
+// namespaces, and workload (deployment/daemonset) names.
+const ADDON_SIGNATURES = [
+  { name: 'ingress-nginx', category: 'Ingress', match: /ingress-nginx|nginx-ingress/i },
+  { name: 'Traefik', category: 'Ingress', match: /traefik/i },
+  { name: 'cert-manager', category: 'Certificates', match: /cert-manager/i, group: /cert-manager\.io/i },
+  { name: 'metrics-server', category: 'Metrics', match: /metrics-server/i },
+  { name: 'CoreDNS', category: 'DNS', match: /coredns|kube-dns/i },
+  { name: 'Calico', category: 'CNI / Network', match: /calico/i, group: /projectcalico\.org|crd\.projectcalico/i },
+  { name: 'Cilium', category: 'CNI / Network', match: /cilium/i, group: /cilium\.io/i },
+  { name: 'Azure CNI', category: 'CNI / Network', match: /azure-cni|azure-npm/i },
+  { name: 'Istio', category: 'Service Mesh', match: /istiod|istio-/i, group: /istio\.io/i },
+  { name: 'Linkerd', category: 'Service Mesh', match: /linkerd/i, group: /linkerd\.io/i },
+  { name: 'Prometheus', category: 'Observability', match: /prometheus/i, group: /monitoring\.coreos\.com/i },
+  { name: 'Grafana', category: 'Observability', match: /grafana/i },
+  { name: 'OpenTelemetry', category: 'Observability', match: /opentelemetry|otel-/i, group: /opentelemetry\.io/i },
+  { name: 'Cluster Autoscaler', category: 'Scaling', match: /cluster-autoscaler/i },
+  { name: 'KEDA', category: 'Scaling', match: /keda/i, group: /keda\.sh/i },
+  { name: 'Gatekeeper / OPA', category: 'Policy', match: /gatekeeper|opa\b/i, group: /gatekeeper\.sh/i },
+  { name: 'Azure Policy', category: 'Policy', match: /azure-policy/i },
+  { name: 'aad-pod-identity', category: 'Identity', match: /nmi|mic\b|aad-pod-identity/i, group: /aadpodidentity\.k8s\.io/i },
+  { name: 'Azure Workload Identity', category: 'Identity', match: /azure-wi-webhook|workload-identity/i },
+  { name: 'Secrets Store CSI', category: 'Secrets', match: /secrets-store|csi-secrets/i, group: /secrets-store\.csi\.x-k8s\.io/i },
+  { name: 'CSI Driver', category: 'Storage', match: /csi-.*driver|csi-azuredisk|csi-azurefile|ebs-csi|efs-csi/i },
+  { name: 'Azure Monitor (ama-logs)', category: 'Observability', match: /ama-logs|omsagent/i },
+  { name: 'Konnectivity', category: 'AKS System', match: /konnectivity/i },
+  { name: 'Flux', category: 'GitOps', match: /flux|source-controller|kustomize-controller/i, group: /toolkit\.fluxcd\.io/i },
+  { name: 'Argo CD', category: 'GitOps', match: /argocd/i, group: /argoproj\.io/i },
+];
+
+const SYSTEM_NS = /^(kube-system|kube-public|kube-node-lease|cert-manager|ingress-nginx|istio-system|linkerd|monitoring|gatekeeper-system|calico-system|tigera-operator|azure-workload-identity-system|kube-flannel|gmp-system|flux-system|argocd)$/i;
+
+// Detect installed add-ons by correlating CRDs + system workloads.
+async function detectAddons() {
+  const [crds, deployments, daemonsets] = await Promise.all([
+    kubectlJSON(['get', 'crd', '-o', 'json']).catch(() => ({ items: [] })),
+    kubectlJSON(['get', 'deployments', '--all-namespaces', '-o', 'json']).catch(() => ({ items: [] })),
+    kubectlJSON(['get', 'daemonsets', '--all-namespaces', '-o', 'json']).catch(() => ({ items: [] })),
+  ]);
+
+  // CRD API groups → indicates installed operators/add-ons.
+  const groupCounts = {};
+  for (const c of crds.items || []) {
+    const group = (c.spec && c.spec.group) || '';
+    if (!group) continue;
+    groupCounts[group] = (groupCounts[group] || 0) + 1;
+  }
+  const crdGroups = Object.entries(groupCounts)
+    .map(([group, count]) => ({ group, count }))
+    .sort((a, b) => b.count - a.count);
+
+  // System workloads (live in system namespaces) = the cluster's add-on plane.
+  const systemWorkloads = [];
+  const addWorkload = (kind) => (w) => {
+    const ns = w.metadata.namespace;
+    if (!SYSTEM_NS.test(ns)) return;
+    systemWorkloads.push({ kind, namespace: ns, name: w.metadata.name,
+      images: (((w.spec && w.spec.template && w.spec.template.spec && w.spec.template.spec.containers) || []).map((c) => c.image)) });
+  };
+  (deployments.items || []).forEach(addWorkload('Deployment'));
+  (daemonsets.items || []).forEach(addWorkload('DaemonSet'));
+
+  // Run the signature matcher across all evidence.
+  const haystack = [
+    ...crdGroups.map((g) => g.group),
+    ...systemWorkloads.map((w) => w.name),
+  ];
+  const detected = [];
+  for (const sig of ADDON_SIGNATURES) {
+    const byName = haystack.some((h) => sig.match.test(h));
+    const byGroup = sig.group && crdGroups.some((g) => sig.group.test(g.group));
+    if (byName || byGroup) {
+      const evidence = [];
+      const wl = systemWorkloads.find((w) => sig.match.test(w.name));
+      if (wl) evidence.push(`${wl.kind} ${wl.namespace}/${wl.name}`);
+      const grp = sig.group && crdGroups.find((g) => sig.group.test(g.group));
+      if (grp) evidence.push(`CRD group ${grp.group} (${grp.count})`);
+      detected.push({ name: sig.name, category: sig.category, evidence });
+    }
+  }
+  detected.sort((a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name));
+
+  return { detected, crdGroups, systemWorkloads };
+}
+
+// --- Service accounts -------------------------------------------------------
+
+// Identity-related annotations across the major clouds + workload identity.
+function identityAnnotations(annotations = {}) {
+  const out = {};
+  if (annotations['azure.workload.identity/client-id']) out.azureClientId = annotations['azure.workload.identity/client-id'];
+  if (annotations['azure.workload.identity/tenant-id']) out.azureTenantId = annotations['azure.workload.identity/tenant-id'];
+  if (annotations['eks.amazonaws.com/role-arn']) out.awsRoleArn = annotations['eks.amazonaws.com/role-arn'];
+  if (annotations['iam.gke.io/gcp-service-account']) out.gcpServiceAccount = annotations['iam.gke.io/gcp-service-account'];
+  return out;
+}
+
+async function listServiceAccounts({ ns } = {}) {
+  const data = await kubectlJSON(['get', 'serviceaccounts', ...nsArgs(ns), '-o', 'json']);
+  return { items: (data.items || []).map((sa) => {
+    const ann = (sa.metadata && sa.metadata.annotations) || {};
+    const identity = identityAnnotations(ann);
+    return {
+      namespace: sa.metadata.namespace, name: sa.metadata.name,
+      secrets: ((sa.secrets || []).map((s) => s.name)),
+      automount: sa.automountServiceAccountToken !== false,
+      identity, hasIdentity: Object.keys(identity).length > 0,
+      age: age(sa.metadata.creationTimestamp),
+    };
+  }).sort((a, b) => (b.hasIdentity - a.hasIdentity) || (a.namespace + a.name).localeCompare(b.namespace + b.name)) };
+}
+
+// --- Managed / workload identities attached to pods -------------------------
+
+// Correlates workload identity (annotated SAs + pods opting in) and the legacy
+// AAD Pod Identity model (AzureIdentity CRDs + aadpodidbinding labels).
+async function listPodIdentities({ ns } = {}) {
+  const [saData, podData] = await Promise.all([
+    kubectlJSON(['get', 'serviceaccounts', ...nsArgs(ns), '-o', 'json']).catch(() => ({ items: [] })),
+    kubectlJSON(['get', 'pods', ...nsArgs(ns), '-o', 'json']).catch(() => ({ items: [] })),
+  ]);
+
+  // Map SA -> identity annotations.
+  const saIdentity = new Map();
+  for (const sa of saData.items || []) {
+    const id = identityAnnotations((sa.metadata && sa.metadata.annotations) || {});
+    if (Object.keys(id).length) saIdentity.set(`${sa.metadata.namespace}/${sa.metadata.name}`, id);
+  }
+
+  const workloadIdentity = [];
+  for (const p of podData.items || []) {
+    const labels = (p.metadata && p.metadata.labels) || {};
+    const saName = (p.spec && p.spec.serviceAccountName) || 'default';
+    const key = `${p.metadata.namespace}/${saName}`;
+    const id = saIdentity.get(key);
+    const usesWI = labels['azure.workload.identity/use'] === 'true';
+    if (id || usesWI) {
+      workloadIdentity.push({
+        namespace: p.metadata.namespace, pod: p.metadata.name,
+        serviceAccount: saName, usesWorkloadIdentity: usesWI,
+        identity: id || null,
+      });
+    }
+  }
+
+  // Legacy AAD Pod Identity (best-effort; CRD may not exist).
+  let azureIdentities = [];
+  try {
+    const ai = await kubectlJSON(['get', 'azureidentity', ...nsArgs(ns), '-o', 'json']);
+    azureIdentities = (ai.items || []).map((x) => ({
+      namespace: x.metadata.namespace, name: x.metadata.name,
+      clientId: x.spec && x.spec.clientID, resourceId: x.spec && x.spec.resourceID, type: x.spec && x.spec.type,
+    }));
+  } catch (_) { /* CRD absent */ }
+
+  const podIdentityBindings = [];
+  for (const p of podData.items || []) {
+    const labels = (p.metadata && p.metadata.labels) || {};
+    if (labels.aadpodidbinding) {
+      podIdentityBindings.push({ namespace: p.metadata.namespace, pod: p.metadata.name, binding: labels.aadpodidbinding });
+    }
+  }
+
+  return {
+    workloadIdentity,
+    azureIdentities,
+    podIdentityBindings,
+    serviceAccountsWithIdentity: [...saIdentity.entries()].map(([k, id]) => {
+      const [namespace, name] = k.split('/');
+      return { namespace, name, identity: id };
+    }),
+  };
 }
 
 // --- API handlers -----------------------------------------------------------
@@ -395,6 +665,29 @@ const api = {
     return { items };
   },
 
+  // --- Helm / add-ons / identity (read-only) ---
+
+  async helm(q) { return listHelmReleases({ ns: q.ns }); },
+
+  // Helm release detail: status + history + user-supplied values (best-effort;
+  // needs the helm binary, returns availability flags otherwise).
+  async helmRelease(q) {
+    if (!validName(q.name)) throw badRequest('valid release name required');
+    if (!validName(q.ns)) throw badRequest('valid namespace required');
+    const out = { name: q.name, namespace: q.ns };
+    try { out.status = JSON.parse(await helm(['status', q.name, '-n', q.ns, '-o', 'json'])); out.helmAvailable = true; }
+    catch (e) { out.helmAvailable = !e.notFound; out.error = e.message; }
+    try { out.history = JSON.parse(await helm(['history', q.name, '-n', q.ns, '-o', 'json'])); } catch (_) {}
+    try { out.values = await helm(['get', 'values', q.name, '-n', q.ns]); } catch (_) {}
+    return out;
+  },
+
+  async addons() { return detectAddons(); },
+
+  async serviceAccounts(q) { return listServiceAccounts({ ns: q.ns }); },
+
+  async identities(q) { return listPodIdentities({ ns: q.ns }); },
+
   async secrets(q) {
     const data = await kubectlJSON(['get', 'secrets', ...nsArgs(q.ns), '-o', 'json']);
     return { items: data.items.map((s) => ({
@@ -555,6 +848,7 @@ const api = {
 async function buildAgentStack() {
   toolRegistry = buildToolRegistry({
     kubectl, kubectlJSON, nsArgs, validName, age, ensureWritable, audit,
+    listHelmReleases, detectAddons, listServiceAccounts, listPodIdentities,
   });
   aiProvider = createAIProvider(process.env);
   try { dbStatus = await db.init(); } catch (e) { dbStatus = { mode: 'json', warning: e.message }; }
