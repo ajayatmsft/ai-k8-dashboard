@@ -1,6 +1,11 @@
 /* k8s-local-dashboard frontend (vanilla JS, no build step) */
 'use strict';
 
+// Backend base URL. Empty = same origin (backend serves these files). Set
+// window.K8S_DASH_API_BASE before this script loads to host the frontend
+// separately (the backend must then set CORS_ORIGIN).
+const API_BASE = window.K8S_DASH_API_BASE || '';
+
 const state = {
   ns: 'default',
   view: 'overview',
@@ -30,7 +35,7 @@ const esc = (s) => String(s == null ? '' : s)
 
 async function api(name, query = {}, opts = {}) {
   const qs = new URLSearchParams(query).toString();
-  const res = await fetch(`/api/${name}${qs ? '?' + qs : ''}`, opts);
+  const res = await fetch(`${API_BASE}/api/${name}${qs ? '?' + qs : ''}`, opts);
   const data = await res.json().catch(() => ({ error: 'bad response' }));
   if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
   return data;
@@ -63,6 +68,7 @@ async function loadConfig() {
   try {
     const cfg = await api('config');
     state.readOnly = cfg.readOnly;
+    state.execEnabled = cfg.execEnabled !== false;
     $('#roBanner').classList.toggle('hidden', !cfg.readOnly);
 
     kcSel.innerHTML = '';
@@ -158,10 +164,18 @@ function setupChrome() {
   });
   $('#contextSelect').addEventListener('change', (e) => applyConfig({ context: e.target.value }, 'Context switched'));
   $('#tabs').addEventListener('click', (e) => {
-    if (e.target.tagName !== 'BUTTON') return;
-    for (const b of $('#tabs').children) b.classList.toggle('active', b === e.target);
-    state.view = e.target.dataset.view;
+    const btn = e.target.closest('button[data-view]');
+    if (!btn) return;
+    for (const b of $('#tabs').querySelectorAll('button')) b.classList.toggle('active', b === btn);
+    state.view = btn.dataset.view;
+    document.body.classList.remove('sidebar-open'); // close drawer on mobile
     render();
+  });
+  const toggle = $('#sidebarToggle');
+  if (toggle) toggle.addEventListener('click', () => {
+    // Small screens use a slide-in drawer; large screens collapse the rail.
+    if (window.matchMedia('(max-width: 860px)').matches) document.body.classList.toggle('sidebar-open');
+    else document.body.classList.toggle('sidebar-collapsed');
   });
   $('#modalClose').addEventListener('click', closeModal);
   $('#modal').addEventListener('click', (e) => { if (e.target.id === 'modal') closeModal(); });
@@ -170,7 +184,9 @@ function setupChrome() {
 // --- views ------------------------------------------------------------------
 
 const content = () => $('#content');
-function setLoading() { content().innerHTML = '<div class="loading">Loading…</div>'; }
+// Animated spinner with contextual text so the user always knows work is happening.
+function spinner(text = 'Loading…') { return el('div', { class: 'spinner' }, text); }
+function setLoading(text) { const c = content(); c.innerHTML = ''; c.appendChild(spinner(text)); }
 function setError(e) { content().innerHTML = `<div class="empty">⚠️ ${esc(e.message)}</div>`; }
 
 async function render() {
@@ -212,11 +228,17 @@ const views = {
     }
   },
 
+  async health() { return renderHealth(); },
+
+  async nodepools() { return renderNodePools(); },
+
   async deployments() {
     const { items } = await api('deployments', { ns: state.ns });
     const c = content();
     c.innerHTML = '';
-    c.appendChild(toolbar('Filter deployments…', 'deployTable'));
+    c.appendChild(toolbar('Filter deployments by name or image…', 'deployTable', {
+      filters: [{ label: 'Namespace', col: 0, values: nsFilterValues(), all: 'All namespaces' }],
+    }));
     if (!items.length) { c.appendChild(el('div', { class: 'empty' }, 'No deployments')); return; }
     const rows = items.map((d) => {
       const healthy = d.ready === d.desired && d.desired > 0;
@@ -245,7 +267,13 @@ const views = {
     const { items } = await api('pods', { ns: state.ns });
     const c = content();
     c.innerHTML = '';
-    c.appendChild(toolbar('Filter pods…', 'podTable'));
+    const phases = [...new Set(items.map((p) => p.phase).filter(Boolean))].sort();
+    c.appendChild(toolbar('Filter pods by name, node or IP…', 'podTable', {
+      filters: [
+        { label: 'Namespace', col: 0, values: nsFilterValues(), all: 'All namespaces' },
+        { label: 'Phase', col: 2, values: phases, all: 'All phases' },
+      ],
+    }));
     if (!items.length) { c.appendChild(el('div', { class: 'empty' }, 'No pods')); return; }
     const rows = items.map((p) => `<tr>
       <td class="mono">${esc(p.namespace)}</td>
@@ -259,7 +287,7 @@ const views = {
       <td class="row-actions">
         <button data-act="logs-pod" data-ns="${esc(p.namespace)}" data-name="${esc(p.name)}">Logs</button>
         <button data-act="describe" data-type="pod" data-ns="${esc(p.namespace)}" data-name="${esc(p.name)}">Describe</button>
-        <button data-act="exec" data-ns="${esc(p.namespace)}" data-name="${esc(p.name)}" data-containers="${esc(p.containers.join(','))}">Debug</button>
+        ${state.execEnabled ? `<button data-act="exec" data-ns="${esc(p.namespace)}" data-name="${esc(p.name)}" data-containers="${esc(p.containers.join(','))}">Debug</button>` : ''}
         <button data-act="delete-pod" data-ns="${esc(p.namespace)}" data-name="${esc(p.name)}">Delete</button>
       </td></tr>`).join('');
     const table = el('table', { id: 'podTable', html: `<thead><tr><th>Namespace</th><th>Name</th><th>Phase</th><th>Ready</th><th>Restarts</th><th>Node</th><th>IP</th><th>Age</th><th>Actions</th></tr></thead><tbody>${rows}</tbody>` });
@@ -423,8 +451,14 @@ const views = {
 
     // ---- pod picker (filter + table). Collapsible. ----
     const picker = el('div', { class: 'logs-picker' });
-    const filterInput = el('input', { type: 'text', placeholder: 'Filter pods…', class: 'grow' });
-    picker.appendChild(el('div', { class: 'toolbar' }, [filterInput]));
+    const podPhases = [...new Set(pods.map((p) => p.phase).filter(Boolean))].sort();
+    const podNamespaces = [...new Set(pods.map((p) => p.namespace).filter(Boolean))].sort();
+    picker.appendChild(toolbar('Filter pods by name or container…', 'logPodTable', {
+      filters: [
+        { label: 'Namespace', col: 0, values: podNamespaces, all: 'All namespaces' },
+        { label: 'Phase', col: 2, values: podPhases, all: 'All phases' },
+      ],
+    }));
 
     if (!pods.length) {
       picker.appendChild(el('div', { class: 'empty' }, 'No pods'));
@@ -438,12 +472,6 @@ const views = {
       <td>${esc(p.age)}</td></tr>`).join('');
     const table = el('table', { id: 'logPodTable', class: 'selectable', html: `<thead><tr><th>Namespace</th><th>Name</th><th>Phase</th><th>Ready</th><th>Containers</th><th>Age</th></tr></thead><tbody>${rows}</tbody>` });
     if (pods.length) picker.appendChild(table);
-
-    filterInput.addEventListener('input', () => {
-      const q = filterInput.value.toLowerCase();
-      if (!table.tBodies[0]) return;
-      for (const tr of table.tBodies[0].rows) tr.style.display = tr.textContent.toLowerCase().includes(q) ? '' : 'none';
-    });
 
     // ---- controls + log viewport ----
     const contSel = el('select', { id: 'logContainer' });
@@ -497,7 +525,7 @@ const views = {
       if (!selected) { box.textContent = 'Pick a pod first.'; return; }
       const { ns, name } = selected;
       logCtx.ns = ns; logCtx.pod = name; logCtx.container = contSel.value; logCtx.search = search.value;
-      box.textContent = 'Loading logs…';
+      box.innerHTML = ''; box.appendChild(spinner('Loading logs…'));
       try {
         const r = await api('logs', { ns, pod: name, container: contSel.value, tail: tail.value || '500', search: search.value, previous: $('#logPrev').checked ? 'true' : 'false' });
         if (r.error) { box.textContent = r.error; return; }
@@ -526,7 +554,13 @@ const views = {
     const { items } = await api('secrets', { ns: state.ns });
     const c = content();
     c.innerHTML = '';
-    c.appendChild(toolbar('Filter secrets…', 'secretTable'));
+    const types = [...new Set(items.map((s) => s.type).filter(Boolean))].sort();
+    c.appendChild(toolbar('Filter secrets by name or key…', 'secretTable', {
+      filters: [
+        { label: 'Namespace', col: 0, values: nsFilterValues(), all: 'All namespaces' },
+        { label: 'Type', col: 2, values: types, all: 'All types' },
+      ],
+    }));
     if (!items.length) { c.appendChild(el('div', { class: 'empty' }, 'No secrets')); return; }
     const rows = items.map((s) => `<tr>
       <td class="mono">${esc(s.namespace)}</td>
@@ -543,7 +577,12 @@ const views = {
     const { items } = await api('events', { ns: state.ns });
     const c = content();
     c.innerHTML = '';
-    c.appendChild(toolbar('Filter events…', 'evtTable'));
+    c.appendChild(toolbar('Filter events by object, reason or message…', 'evtTable', {
+      filters: [
+        { label: 'Type', col: 0, values: ['Warning', 'Normal'], all: 'All types' },
+        { label: 'Namespace', col: 1, values: nsFilterValues(), all: 'All namespaces' },
+      ],
+    }));
     if (!items.length) { c.appendChild(el('div', { class: 'empty' }, 'No events')); return; }
     const rows = items.map((e) => `<tr>
       <td>${e.type === 'Warning' ? '<span class="pill yellow">Warning</span>' : '<span class="pill gray">Normal</span>'}</td>
@@ -613,7 +652,7 @@ function renderAggregate(prefill) {
     stopStream();
     const q = readFilter();
     if (!q.regex && !q.selector) { box.textContent = 'Enter a matcher first.'; return; }
-    box.textContent = 'Collecting logs…';
+    box.innerHTML = ''; box.appendChild(spinner('Collecting logs across matching pods…'));
     try {
       const r = await api('aggregateLogs', q);
       status.textContent = `${r.podCount} pod(s)${r.capped ? ' (capped to 60)' : ''}`;
@@ -629,7 +668,7 @@ function renderAggregate(prefill) {
     box.innerHTML = '';
     lastLines = [];
     status.textContent = 'connecting…';
-    const es = new EventSource('/api/streamLogs?' + new URLSearchParams(q).toString());
+    const es = new EventSource(API_BASE + '/api/streamLogs?' + new URLSearchParams(q).toString());
     evtSource = es;
     const colors = {};
     const colorFor = (pod) => (colors[pod] || (colors[pod] = `hsl(${Math.abs(hash(pod)) % 360} 70% 65%)`));
@@ -726,7 +765,7 @@ function investigate(question, steps, reportBox, historyBox, runBtn) {
     return row;
   };
   const q = { question, ns: state.ns };
-  const es = new EventSource('/api/investigate?' + new URLSearchParams(q).toString());
+  const es = new EventSource(API_BASE + '/api/investigate?' + new URLSearchParams(q).toString());
   evtSource = es;
 
   es.addEventListener('meta', (ev) => {
@@ -880,13 +919,20 @@ function renderBulk() {
   );
 
   let matched = [];
+  let confirmToken = null; // from the last dry-run; execute must present it
   function body(dryRun) {
     const b = { ns: nsSel.value, dryRun };
     if (modeSel.value === 'label') b.selector = matcher.value.trim();
     else b.regex = matcher.value.trim();
     if (opSel.value === 'restart') b.kinds = [...c.querySelectorAll('.kindcb')].filter((x) => x.checked).map((x) => x.value);
+    if (!dryRun) b.confirmToken = confirmToken;
     return b;
   }
+
+  // Any filter change invalidates the preview — force a fresh dry-run.
+  const invalidate = () => { confirmToken = null; runBtn.disabled = true; };
+  for (const input of [opSel, modeSel, matcher, nsSel]) input.addEventListener('input', invalidate);
+  c.addEventListener('change', (e) => { if (e.target.classList && e.target.classList.contains('kindcb')) invalidate(); });
 
   async function preview() {
     if (!matcher.value.trim()) { toast('Enter a matcher', 'err'); return; }
@@ -896,6 +942,7 @@ function renderBulk() {
       const ep = opSel.value === 'restart' ? 'bulkRestart' : 'bulkDeletePods';
       const r = await post(ep, body(true));
       matched = r.matched || [];
+      confirmToken = r.confirmToken || null;
       if (!matched.length) { out.innerHTML = '<div class="empty">No resources matched.</div>'; return; }
       const rows = matched.map((m) => `<tr><td class="mono">${esc(m.kind || 'pod')}</td><td class="mono">${esc(m.namespace)}</td><td class="mono">${esc(m.name)}</td></tr>`).join('');
       out.innerHTML = '';
@@ -926,18 +973,330 @@ function renderBulk() {
   runBtn.addEventListener('click', execute);
 }
 
+// --- cluster health (memory / CPU / crash / OOM detection) ------------------
+
+function barClass(pct) { return pct >= 90 ? 'b-red' : pct >= 75 ? 'b-yellow' : 'b-green'; }
+function gaugeColor(score) { return score >= 90 ? 'var(--green)' : score >= 70 ? 'var(--yellow)' : 'var(--red)'; }
+function sevPill(sev) {
+  const map = { critical: 'red', high: 'yellow', medium: 'gray', low: 'gray' };
+  return `<span class="pill ${map[sev] || 'gray'}">${esc(sev)}</span>`;
+}
+
+function meterCard(title, pct, sub) {
+  const has = pct != null;
+  return el('div', { class: 'meter-card' }, [
+    el('div', { class: 'm-title' }, title),
+    el('div', { class: 'm-val' }, has ? pct + '%' : '—'),
+    el('div', { class: 'bar' }, [el('span', { class: has ? barClass(pct) : '', style: `width:${has ? pct : 0}%` })]),
+    el('div', { class: 'm-sub' }, sub || ''),
+  ]);
+}
+
+async function renderHealth() {
+  stopStream();
+  const c = content();
+  c.innerHTML = '<div class="loading">Analyzing cluster health…</div>';
+  let h;
+  try { h = await api('clusterHealth', { ns: state.ns }); }
+  catch (e) { setError(e); return; }
+  c.innerHTML = '';
+
+  // ---- top row: health score gauge + CPU/memory meters ----
+  const gauge = el('div', { class: 'gauge', style: `--v:${h.score};--c:${gaugeColor(h.score)}` }, [
+    el('div', { class: 'g-num' }, String(h.score)),
+    el('div', { class: 'g-sub' }, '/ 100'),
+  ]);
+  const scoreCard = el('div', { class: 'score-card' }, [
+    gauge,
+    el('div', { class: 'score-grade', style: `color:${gaugeColor(h.score)}` }, h.grade),
+    el('div', { class: 'muted', style: 'font-size:12px' }, `${h.counts.critical} critical · ${h.counts.high} high`),
+  ]);
+  const cpuCard = meterCard('Cluster CPU', h.cluster.cpuPct, h.cluster.cpuText);
+  const memCard = meterCard('Cluster Memory', h.cluster.memPct, h.cluster.memText);
+  c.appendChild(el('div', { class: 'health-top' }, [scoreCard, cpuCard, memCard]));
+
+  // ---- summary banner ----
+  const tone = h.counts.critical ? 'bad' : h.counts.high ? 'warn' : 'good';
+  c.appendChild(el('div', { class: 'health-summary ' + tone }, [
+    el('span', {}, h.counts.critical ? '🔴' : h.counts.high ? '🟡' : '🟢'),
+    el('span', {}, h.summary),
+  ]));
+
+  if (!h.metricsAvailable) {
+    c.appendChild(el('div', { class: 'metrics-warn' }, '⚠️ metrics-server not detected — CPU/memory usage and leak detection are limited. Crash/OOM analysis still works from pod status. Install metrics-server for full insight.'));
+  }
+
+  // ---- detected issues (the actionable core) ----
+  c.appendChild(el('h3', {}, `Detected issues (${h.issues.length})`));
+  if (!h.issues.length) {
+    c.appendChild(el('div', { class: 'empty' }, '✅ No memory, CPU, crash, or OOM issues in this scope.'));
+  } else {
+    const list = el('div', { class: 'issue-list' });
+    for (const it of h.issues) list.appendChild(issueCard(it));
+    c.appendChild(list);
+  }
+
+  // ---- top memory consumers (leak hunting) ----
+  if (h.topMemory && h.topMemory.length) {
+    c.appendChild(el('h3', {}, 'Top memory consumers'));
+    const rows = h.topMemory.map((m) => {
+      const pctCell = m.memPctOfLimit != null
+        ? `<div class="bar mini"><span class="${barClass(m.memPctOfLimit)}" style="width:${Math.min(100, m.memPctOfLimit)}%"></span></div> ${m.memPctOfLimit}%`
+        : '<span class="muted">no limit</span>';
+      return `<tr>
+        <td class="mono">${esc(m.namespace || '')}</td>
+        <td class="mono">${esc(m.pod)}</td>
+        <td class="mono">${esc(m.container)}</td>
+        <td class="mono">${esc(m.memText)}</td>
+        <td class="mono">${esc(m.memLimitText || '—')}</td>
+        <td>${pctCell}</td>
+        <td>${m.restarts > 0 ? `<span class="pill ${m.restarts > 4 ? 'red' : 'yellow'}">${m.restarts}</span>` : '0'}</td></tr>`;
+    }).join('');
+    c.appendChild(el('table', { html: `<thead><tr><th>Namespace</th><th>Pod</th><th>Container</th><th>Memory</th><th>Limit</th><th>% of limit</th><th>Restarts</th></tr></thead><tbody>${rows}</tbody>` }));
+  }
+
+  // ---- per-node CPU/memory ----
+  if (h.nodes && h.nodes.length) {
+    c.appendChild(el('h3', {}, 'Nodes'));
+    const rows = h.nodes.map((n) => {
+      const cpuBar = n.cpuPct != null ? `<div class="bar mini"><span class="${barClass(n.cpuPct)}" style="width:${n.cpuPct}%"></span></div> ${n.cpuPct}%` : '<span class="muted">—</span>';
+      const memBar = n.memPct != null ? `<div class="bar mini"><span class="${barClass(n.memPct)}" style="width:${n.memPct}%"></span></div> ${n.memPct}%` : '<span class="muted">—</span>';
+      return `<tr>
+        <td class="mono">${esc(n.name)}</td>
+        <td class="mono">${n.pool ? esc(n.pool) : '<span class="muted">—</span>'}</td>
+        <td class="mono">${n.sku ? `<span class="tag">${esc(n.sku)}</span>` : '<span class="muted">—</span>'}</td>
+        <td>${n.ready ? '<span class="pill green">Ready</span>' : '<span class="pill red">NotReady</span>'}</td>
+        <td>${cpuBar} <span class="muted mono">${esc(n.cpuText || '')}</span></td>
+        <td>${memBar} <span class="muted mono">${esc(n.memText || '')}</span></td>
+        <td>${(n.pressure || []).length ? `<span class="pill red">${esc(n.pressure.join(', '))}</span>` : '<span class="muted">none</span>'}</td></tr>`;
+    }).join('');
+    c.appendChild(el('table', { html: `<thead><tr><th>Node</th><th>Pool</th><th>SKU</th><th>Status</th><th>CPU</th><th>Memory</th><th>Pressure</th></tr></thead><tbody>${rows}</tbody>` }));
+  }
+}
+
+// One actionable issue card with a suggested fix and quick remediation buttons.
+function issueCard(it) {
+  const head = el('div', { class: 'issue-head', html: sevPill(it.severity) });
+  head.appendChild(el('span', { class: 'issue-title' }, it.title));
+  const target = [it.namespace, it.pod, it.container].filter(Boolean).join(' / ');
+  if (target) head.appendChild(el('span', { class: 'tag mono' }, target));
+
+  const card = el('div', { class: 'issue sev-' + it.severity }, [
+    head,
+    el('div', { class: 'issue-detail' }, it.detail || ''),
+    el('div', { class: 'issue-fix', html: `<b>Suggested fix:</b> ${esc(it.fix || '—')}` }),
+  ]);
+
+  // "What is causing this node's memory?" — attribution breakdown for node issues.
+  if (it.consumers && it.consumers.length) {
+    const cons = el('div', { class: 'consumers' });
+    cons.appendChild(el('div', { class: 'consumers-title' }, 'Top memory consumers on this node'));
+    for (const x of it.consumers) {
+      const row = el('div', { class: 'consumer-row' }, [
+        el('span', { class: 'mono grow' }, `${x.namespace}/${x.pod} · ${x.container}`),
+        el('span', { class: 'mono consumer-mem' }, x.memText + (x.memPctOfNode != null ? `  (${x.memPctOfNode}%)` : '')),
+      ]);
+      const acts = el('span', { class: 'consumer-acts' }, [
+        el('button', { title: 'Show the running processes/programs inside this container', onclick: () => openProcs(x.namespace, x.pod, x.container) }, '🔬 Top processes'),
+        el('button', { title: 'View logs', onclick: () => { logCtx.ns = x.namespace; logCtx.pod = x.pod; logCtx.container = x.container || ''; logCtx.search = ''; switchTab('logs'); } }, '📜 Logs'),
+      ]);
+      row.appendChild(acts);
+      cons.appendChild(row);
+    }
+    card.appendChild(cons);
+  }
+
+  // Quick actions to help debug/fix without leaving the view.
+  const actions = el('div', { class: 'issue-actions' });
+  if (it.pod && it.namespace) {
+    actions.appendChild(el('button', { onclick: () => {
+      logCtx.ns = it.namespace; logCtx.pod = it.pod; logCtx.container = it.container || ''; logCtx.search = '';
+      switchTab('logs');
+    } }, it.previousLogs ? '📜 Previous logs' : '📜 Logs'));
+    // Reveal the actual process/program using memory — no source code needed.
+    if (it.container) actions.appendChild(el('button', { title: 'Show the running processes/programs inside this container, sorted by memory', onclick: () => openProcs(it.namespace, it.pod, it.container) }, '🔬 Top processes'));
+    actions.appendChild(el('button', { onclick: () => openDescribe('pod', it.namespace, it.pod) }, '🔍 Describe'));
+    if (!state.readOnly) {
+      actions.appendChild(el('button', { class: 'danger', onclick: () => doDeletePod(it.namespace, it.pod) }, '♻️ Restart pod'));
+    }
+  }
+  // Always allow an AI deep-dive seeded with the affected target.
+  const q = it.pod ? `Investigate ${it.pod}` : it.node ? `Investigate node ${it.node}` : 'Investigate cluster health';
+  actions.appendChild(el('button', { class: 'primary', onclick: () => {
+    asstState.question = q;
+    switchTab('assistant');
+    setTimeout(() => { const i = $('.asst-main input'); if (i) { i.value = q; } }, 60);
+  } }, '🤖 Ask AI'));
+  card.appendChild(actions);
+  return card;
+}
+
+// --- node pools / SKUs / node selectors -------------------------------------
+
+async function renderNodePools() {
+  stopStream();
+  const c = content();
+  c.innerHTML = '';
+  c.appendChild(spinner('Loading node pools & SKUs…'));
+  let d;
+  try { d = await api('nodePools', { ns: state.ns }); }
+  catch (e) { setError(e); return; }
+  c.innerHTML = '';
+
+  // ---- pool summary cards ----
+  c.appendChild(el('h3', {}, `Node pools (${d.pools.length})`));
+  if (!d.pools.length) {
+    c.appendChild(el('div', { class: 'empty' }, 'No nodes found (or node labels unavailable).'));
+  } else {
+    const cards = el('div', { class: 'cards' });
+    for (const p of d.pools) {
+      const card = el('div', { class: 'card pool-card' }, [
+        el('div', { class: 'pool-head' }, [
+          el('div', { class: 'value', style: 'font-size:1.05rem' }, p.name),
+          p.mode ? el('span', { class: 'pill ' + (p.mode === 'System' ? 'yellow' : 'gray') }, p.mode) : null,
+        ]),
+        el('div', { class: 'pool-meta' }, [
+          kvline('SKU', (p.skus.length ? p.skus : ['—']).map((s) => `<span class="tag">${esc(s)}</span>`).join(' ')),
+          kvline('Nodes', `${p.ready}/${p.count} ready`),
+          kvline('Capacity', `${esc(p.totalCpu)} vCPU · ${esc(p.totalMemory)}`),
+          kvline('Zones', p.zones.length ? p.zones.map((z) => `<span class="tag">${esc(z)}</span>`).join(' ') : '<span class="muted">—</span>'),
+          kvline('OS / Arch', `${esc((p.os[0] || '—'))}${p.arch.length ? ' · ' + esc(p.arch.join(', ')) : ''}`),
+        ]),
+      ]);
+      cards.appendChild(card);
+    }
+    c.appendChild(cards);
+  }
+
+  // ---- nodes table ----
+  c.appendChild(el('h3', {}, `Nodes (${d.nodes.length})`));
+  if (d.nodes.length) {
+    const rows = d.nodes.map((n) => `<tr>
+      <td class="mono"><a class="link" data-node="${esc(n.name)}">${esc(n.name)}</a></td>
+      <td class="mono">${esc(n.pool)}</td>
+      <td>${n.sku ? `<span class="tag">${esc(n.sku)}</span>` : '<span class="muted">—</span>'}</td>
+      <td class="mono">${esc(n.osSku || n.os || '')}${n.arch ? ' / ' + esc(n.arch) : ''}</td>
+      <td class="mono">${esc(n.zone || '—')}</td>
+      <td>${n.mode ? `<span class="pill ${n.mode === 'System' ? 'yellow' : 'gray'}">${esc(n.mode)}</span>` : '<span class="muted">—</span>'}</td>
+      <td class="mono">${esc(n.cpu || '')} / ${esc(n.memory || '')}</td>
+      <td class="mono">${esc(String(n.pods))}${n.maxPods ? '/' + esc(String(n.maxPods)) : ''}</td>
+      <td>${n.ready ? '<span class="pill green">Ready</span>' : '<span class="pill red">NotReady</span>'}</td>
+      <td>${(n.taints || []).length ? n.taints.map((t) => `<span class="tag">${esc(t)}</span>`).join(' ') : '<span class="muted">none</span>'}</td></tr>`).join('');
+    const table = el('table', { id: 'nodePoolTable', html: `<thead><tr><th>Node</th><th>Pool</th><th>SKU</th><th>OS/Arch</th><th>Zone</th><th>Mode</th><th>CPU / Mem</th><th>Pods</th><th>Status</th><th>Taints</th></tr></thead><tbody>${rows}</tbody>` });
+    table.addEventListener('click', (e) => {
+      const a = e.target.closest('a[data-node]');
+      if (!a) return;
+      const node = d.nodes.find((x) => x.name === a.dataset.node);
+      if (node) openNodeDetails(node);
+    });
+    c.appendChild(table);
+  }
+
+  // ---- node selectors in use ----
+  c.appendChild(el('h3', {}, `Node selectors in use (${d.scheduling.length})`));
+  c.appendChild(el('div', { class: 'muted', style: 'margin:-4px 0 10px' }, 'Workloads that pin themselves to specific nodes/pools via nodeSelector, node affinity, or tolerations' + (state.ns && state.ns !== '_all' ? ` (namespace: ${esc(state.ns)})` : '') + '.'));
+  if (!d.scheduling.length) {
+    c.appendChild(el('div', { class: 'empty' }, 'No workloads use nodeSelector / affinity / tolerations in this scope.'));
+  } else {
+    const rows = d.scheduling.map((w) => {
+      const sel = Object.entries(w.nodeSelector || {}).map(([k, v]) => `<span class="tag">${esc(k)}=${esc(v)}</span>`).join(' ') || '<span class="muted">—</span>';
+      const aff = (w.affinity || []).length ? w.affinity.map((a) => `<span class="tag">${esc(a)}</span>`).join(' ') : '<span class="muted">—</span>';
+      const tol = (w.tolerations || []).length ? w.tolerations.map((t) => `<span class="tag">${esc(t)}</span>`).join(' ') : '<span class="muted">—</span>';
+      return `<tr>
+        <td class="mono">${esc(w.kind)}</td>
+        <td class="mono">${esc(w.namespace)}</td>
+        <td class="mono">${esc(w.name)}</td>
+        <td>${sel}</td>
+        <td>${aff}</td>
+        <td>${tol}</td></tr>`;
+    }).join('');
+    c.appendChild(el('table', { html: `<thead><tr><th>Kind</th><th>Namespace</th><th>Name</th><th>nodeSelector</th><th>Node affinity</th><th>Tolerations</th></tr></thead><tbody>${rows}</tbody>` }));
+  }
+}
+
+function kvline(k, htmlVal) {
+  return el('div', { class: 'pool-kv' }, [el('span', { class: 'pk' }, k), el('span', { class: 'pv', html: htmlVal })]);
+}
+
+// Node detail modal built entirely from data we already have (nodes are not
+// namespaced, so we avoid an extra describe call). Shows the labels a developer
+// would use in a nodeSelector to target this node/pool.
+function openNodeDetails(n) {
+  openModal(`node ${n.name}`, {
+    Details: () => {
+      const grid = el('div', { class: 'kv' });
+      const add = (k, v) => { grid.appendChild(el('div', { class: 'k' }, k)); grid.appendChild(el('div', { class: 'v mono' }, v == null || v === '' ? '—' : String(v))); };
+      add('Node pool', n.pool);
+      add('VM SKU / instance type', n.sku);
+      add('AKS mode', n.mode);
+      add('OS', n.osSku || n.os);
+      add('Architecture', n.arch);
+      add('Region / Zone', [n.region, n.zone].filter(Boolean).join(' / '));
+      add('CPU / Memory', `${n.cpu || '—'} / ${n.memory || '—'}`);
+      add('Pods', `${n.pods}${n.maxPods ? ' / ' + n.maxPods + ' max' : ''}`);
+      add('Kubelet', n.kubelet);
+      add('Ready', n.ready ? 'Yes' : 'No');
+      add('Age', n.age);
+      add('Taints', (n.taints || []).join('  ') || 'none');
+      return grid;
+    },
+    'Selector labels': () => {
+      const wrap = el('div', {});
+      wrap.appendChild(el('div', { class: 'muted', style: 'margin-bottom:8px' }, 'Use any of these as a nodeSelector (key: value) to schedule pods onto this node/pool:'));
+      const grid = el('div', { class: 'kv' });
+      const labels = n.labels || {};
+      if (!Object.keys(labels).length) grid.appendChild(el('div', { class: 'muted' }, 'No well-known selectable labels found.'));
+      for (const [k, v] of Object.entries(labels)) {
+        grid.appendChild(el('div', { class: 'k' }, k));
+        grid.appendChild(el('div', { class: 'v mono' }, v));
+      }
+      wrap.appendChild(grid);
+      return wrap;
+    },
+  });
+}
+
 // --- generic filter toolbar -------------------------------------------------
 
-function toolbar(placeholder, tableId) {
+// toolbar(placeholder, tableId, opts?)
+//   opts.filters: [{ label, col, values:[...], all?:string }]  — column dropdown filters
+// Combines a free-text search with any number of exact-match column dropdowns.
+function toolbar(placeholder, tableId, opts = {}) {
   const input = el('input', { type: 'text', placeholder, class: 'grow' });
-  input.addEventListener('input', () => {
+  const selects = [];
+  const controls = [input];
+  for (const f of (opts.filters || [])) {
+    if (!f.values || !f.values.length) continue;
+    const s = el('select', {});
+    s.appendChild(el('option', { value: '__all' }, f.all || `All ${f.label.toLowerCase()}s`));
+    for (const v of f.values) s.appendChild(el('option', { value: v }, v));
+    s.dataset.col = f.col;
+    selects.push(s);
+    controls.push(el('span', { class: 'filter-label' }, f.label), s);
+  }
+  function apply() {
     const q = input.value.toLowerCase();
     const tbl = document.getElementById(tableId);
-    if (!tbl) return;
-    for (const tr of tbl.tBodies[0].rows) tr.style.display = tr.textContent.toLowerCase().includes(q) ? '' : 'none';
-  });
-  return el('div', { class: 'toolbar' }, [input]);
+    if (!tbl || !tbl.tBodies[0]) return;
+    for (const tr of tbl.tBodies[0].rows) {
+      let show = tr.textContent.toLowerCase().includes(q);
+      if (show) {
+        for (const s of selects) {
+          if (s.value === '__all') continue;
+          const cell = tr.cells[Number(s.dataset.col)];
+          if (!cell || cell.textContent.trim() !== s.value) { show = false; break; }
+        }
+      }
+      tr.style.display = show ? '' : 'none';
+    }
+  }
+  input.addEventListener('input', apply);
+  for (const s of selects) s.addEventListener('change', apply);
+  return el('div', { class: 'toolbar' }, controls);
 }
+
+// Distinct namespace names for column filters (from the loaded namespace list).
+function nsFilterValues() { return (state.namespaces || []).map((n) => n.name); }
 
 // --- table action dispatch --------------------------------------------------
 
@@ -967,7 +1326,7 @@ async function onTableAction(e) {
 
 function switchTab(view) {
   state.view = view;
-  for (const b of $('#tabs').children) b.classList.toggle('active', b.dataset.view === view);
+  for (const b of $('#tabs').querySelectorAll('button')) b.classList.toggle('active', b.dataset.view === view);
   if (view !== 'aggregate') render();
 }
 
@@ -998,11 +1357,13 @@ function openModal(title, tabs) {
   const tabBar = $('#modalTabs');
   const body = $('#modalBody');
   tabBar.innerHTML = '';
-  body.innerHTML = '<div class="loading">Loading…</div>';
+  body.innerHTML = '';
+  body.appendChild(spinner('Loading…'));
   const tabNames = Object.keys(tabs);
   const activate = async (n, btn) => {
     for (const b of tabBar.children) b.classList.toggle('active', b === btn);
-    body.innerHTML = '<div class="loading">Loading…</div>';
+    body.innerHTML = '';
+    body.appendChild(spinner(`Loading ${n.toLowerCase()}…`));
     try { body.innerHTML = ''; body.appendChild(await tabs[n]()); }
     catch (e) { body.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
   };
@@ -1017,25 +1378,69 @@ function openModal(title, tabs) {
 function closeModal() { $('#modal').classList.add('hidden'); }
 function preFrom(text) { return el('pre', {}, text); }
 
+// Render `kubectl describe` output as tidy key/value lines: top-level headings
+// (e.g. "Containers:", "Events:") are emphasised and every "Key:" is coloured,
+// so the structure is scannable instead of a wall of text.
+function describeNode(text) {
+  const wrap = el('div', { class: 'desc' });
+  for (const line of String(text == null ? '' : text).split('\n')) {
+    const row = el('div', { class: 'desc-line' });
+    const m = line.match(/^(\s*)([A-Za-z][\w()./,\-& ]*?):(\s*)(.*)$/);
+    if (m) {
+      if (m[1]) row.appendChild(document.createTextNode(m[1])); // preserve indentation
+      const isSection = m[1].length === 0 && m[4] === '';
+      row.appendChild(el('span', { class: isSection ? 'desc-key section' : 'desc-key' }, m[2] + ':'));
+      if (m[3] || m[4]) row.appendChild(document.createTextNode(m[3] + m[4]));
+    } else {
+      row.textContent = line || '\u00a0';
+    }
+    wrap.appendChild(row);
+  }
+  return wrap;
+}
+
+// Render YAML with coloured keys and comments (read-only viewer).
+function yamlNode(text) {
+  const pre = el('pre', { class: 'yaml-view' });
+  for (const line of String(text == null ? '' : text).split('\n')) {
+    const row = el('div', {});
+    const trimmed = line.trimStart();
+    if (trimmed.startsWith('#')) {
+      row.appendChild(el('span', { class: 'y-comment' }, line || '\u00a0'));
+    } else {
+      const m = line.match(/^(\s*(?:- )?)([\w.\-/]+)(:)(.*)$/);
+      if (m) {
+        row.appendChild(document.createTextNode(m[1]));
+        row.appendChild(el('span', { class: 'y-key' }, m[2]));
+        row.appendChild(document.createTextNode(m[3] + m[4]));
+      } else {
+        row.textContent = line || '\u00a0';
+      }
+    }
+    pre.appendChild(row);
+  }
+  return pre;
+}
+
 function openDescribe(type, ns, name) {
   openModal(`${type} ${ns}/${name}`, {
-    Describe: async () => preFrom((await api('describe', { type, ns, name })).text),
-    YAML: async () => preFrom((await api('manifest', { type, ns, name })).text),
+    Describe: async () => describeNode((await api('describe', { type, ns, name })).text),
+    YAML: async () => yamlNode((await api('manifest', { type, ns, name })).text),
     Edit: () => editYamlTab(type, ns, name),
   });
 }
 function openManifest(type, ns, name) {
   openModal(`${type} ${ns}/${name}`, {
-    YAML: async () => preFrom((await api('manifest', { type, ns, name })).text),
+    YAML: async () => yamlNode((await api('manifest', { type, ns, name })).text),
     Edit: () => editYamlTab(type, ns, name),
-    Describe: async () => preFrom((await api('describe', { type, ns, name })).text),
+    Describe: async () => describeNode((await api('describe', { type, ns, name })).text),
   });
 }
 function openEditYaml(type, ns, name) {
   openModal(`Edit ${type} ${ns}/${name}`, {
     Edit: () => editYamlTab(type, ns, name),
-    YAML: async () => preFrom((await api('manifest', { type, ns, name })).text),
-    Describe: async () => preFrom((await api('describe', { type, ns, name })).text),
+    YAML: async () => yamlNode((await api('manifest', { type, ns, name })).text),
+    Describe: async () => describeNode((await api('describe', { type, ns, name })).text),
   });
 }
 
@@ -1106,6 +1511,8 @@ function openSecret(ns, name) {
     Decoded: async () => {
       const s = await api('secret', { ns, name });
       const grid = el('div', { class: 'kv' });
+      if (s.redacted) grid.appendChild(el('div', { class: 'muted', style: 'grid-column:1/-1' }, 'Values are redacted in READ-ONLY mode.'));
+      else grid.appendChild(el('div', { class: 'muted', style: 'grid-column:1/-1' }, 'Secret access is written to the audit log.'));
       for (const [k, v] of Object.entries(s.data)) {
         grid.appendChild(el('div', { class: 'k' }, k));
         const val = el('div', { class: 'v' });
@@ -1119,7 +1526,7 @@ function openSecret(ns, name) {
       }
       return grid;
     },
-    YAML: async () => preFrom((await api('manifest', { type: 'secret', ns, name })).text),
+    YAML: async () => yamlNode((await api('manifest', { type: 'secret', ns, name })).text),
   });
 }
 function openHelmDetail(ns, name) {
@@ -1158,9 +1565,109 @@ function openHelmDetail(ns, name) {
     },
     Values: async () => {
       const r = await api('helmRelease', { ns, name });
-      return preFrom(r.values || '(no user-supplied values, or helm binary unavailable)');
+      return yamlNode(r.values || '(no user-supplied values, or helm binary unavailable)');
     },
   });
+}
+
+// Reveal the actual processes/programs running *inside* a container, sorted by
+// memory — so a developer can see what is consuming RAM without reading code.
+// Reads /proc directly (portable across distros/busybox) and renders a friendly
+// table; a raw toggle shows the unparsed output.
+function openProcs(ns, pod, container) {
+  if (state.readOnly) { toast('READ-ONLY mode: process inspection disabled', 'err'); return; }
+  // Emit tab-delimited "RSS(kB)\tPID\tNAME\tCMDLINE" per process from /proc.
+  const cmd =
+    'for d in /proc/[0-9]*; do ' +
+    '[ -r "$d/status" ] || continue; ' +
+    'rss=$(awk \'/^VmRSS:/{print $2}\' "$d/status" 2>/dev/null); ' +
+    '[ -n "$rss" ] || continue; ' +
+    'name=$(awk \'/^Name:/{print $2}\' "$d/status" 2>/dev/null); ' +
+    'pid=${d#/proc/}; ' +
+    'cmd=$(tr \'\\0\' \' \' < "$d/cmdline" 2>/dev/null); ' +
+    'printf \'%s\\t%s\\t%s\\t%s\\n\' "$rss" "$pid" "$name" "$cmd"; ' +
+    'done | sort -rn | head -30';
+
+  openModal(`Processes in ${ns}/${pod}${container ? ' [' + container + ']' : ''}`, {
+    Processes: () => {
+      const wrap = el('div', {});
+      wrap.appendChild(el('div', { class: 'proc-note' },
+        'Live processes inside the container, sorted by resident memory (RSS). This shows which program is using RAM — a process whose RSS keeps climbing across refreshes is your leak. No source code needed.'));
+
+      const refresh = el('button', {}, '↻ Refresh');
+      const rawBtn = el('button', {}, 'View raw');
+      const total = el('span', { class: 'proc-total' }, '');
+      wrap.appendChild(el('div', { class: 'proc-toolbar' }, [refresh, rawBtn, el('span', { class: 'grow' }), total]));
+
+      const mount = el('div', {});
+      const rawBox = el('pre', { class: 'exec-out proc-raw hidden' });
+      wrap.append(mount, rawBox);
+
+      let showRaw = false;
+      rawBtn.addEventListener('click', () => {
+        showRaw = !showRaw;
+        rawBox.classList.toggle('hidden', !showRaw);
+        mount.classList.toggle('hidden', showRaw);
+        rawBtn.textContent = showRaw ? 'View table' : 'View raw';
+      });
+
+      async function load() {
+        mount.innerHTML = '';
+        mount.appendChild(spinner('Inspecting running processes…'));
+        total.textContent = '';
+        try {
+          const b = { ns, pod, command: cmd };
+          if (container) b.container = container;
+          const r = await post('exec', b);
+          const text = (r.output || '').trim();
+          rawBox.textContent = (text + (r.error ? '\n[stderr] ' + r.error : '')) || '(no output)';
+          const procs = parseProcs(text);
+          mount.innerHTML = '';
+          if (!procs.length) {
+            mount.appendChild(el('div', { class: 'empty' },
+              r.error ? r.error : 'Could not read processes — this image may be distroless / have no shell or /proc. Try “View raw”.'));
+            return;
+          }
+          let totalKb = 0; for (const p of procs) totalKb += p.rssKb;
+          total.textContent = `${procs.length} process(es) · ${fmtKb(totalKb)} total RSS`;
+          const rows = procs.map((p) => `<tr>
+            <td class="mono rss">${esc(fmtKb(p.rssKb))}</td>
+            <td class="mono">${esc(p.pid)}</td>
+            <td class="mono">${esc(p.name || '')}</td>
+            <td class="mono cmd" title="${esc(p.cmd || p.name || '')}">${esc(p.cmd || p.name || '')}</td></tr>`).join('');
+          mount.appendChild(el('table', { class: 'proc-table', html: `<thead><tr><th>Memory (RSS)</th><th>PID</th><th>Process</th><th>Command</th></tr></thead><tbody>${rows}</tbody>` }));
+        } catch (e) {
+          mount.innerHTML = '';
+          mount.appendChild(el('div', { class: 'empty' }, e.message));
+        }
+      }
+      refresh.addEventListener('click', load);
+      load();
+      return wrap;
+    },
+    Describe: async () => describeNode((await api('describe', { type: 'pod', ns, name: pod })).text),
+  });
+}
+
+// Parse the tab-delimited "RSS\tPID\tNAME\tCMD" lines emitted by openProcs' command.
+function parseProcs(text) {
+  const rows = [];
+  for (const line of String(text || '').split('\n')) {
+    if (line.indexOf('\t') === -1) continue;
+    const parts = line.split('\t');
+    const rssKb = parseInt(parts[0], 10);
+    if (!Number.isFinite(rssKb)) continue;
+    rows.push({ rssKb, pid: parts[1], name: parts[2], cmd: parts.slice(3).join(' ').trim() });
+  }
+  return rows;
+}
+
+// Human-readable memory from a kB value (as reported by /proc VmRSS).
+function fmtKb(kb) {
+  let n = kb; const u = ['KB', 'MB', 'GB', 'TB'];
+  let i = 0;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i += 1; }
+  return `${n >= 100 || i === 0 ? Math.round(n) : n.toFixed(1)} ${u[i]}`;
 }
 
 function openExec(ns, name, containers) {
@@ -1192,7 +1699,7 @@ function openExec(ns, name, containers) {
       wrap.append(ta, el('div', {}, run), out);
       return wrap;
     },
-    Describe: async () => preFrom((await api('describe', { type: 'pod', ns, name })).text),
+    Describe: async () => describeNode((await api('describe', { type: 'pod', ns, name })).text),
   });
 }
 

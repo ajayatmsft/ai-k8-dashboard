@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>K8s Local Dashboard</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>☸️</text></svg>" />
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">☸️ <span>K8s Dashboard</span></div>
+
+      <nav class="nav" id="tabs">
+        <div class="nav-group">Cluster</div>
+        <button data-view="overview" class="active"><span class="ico">📊</span> Overview</button>
+        <button data-view="health"><span class="ico">❤️</span> Cluster Health</button>
+        <button data-view="nodepools"><span class="ico">🖥️</span> Node Pools</button>
+        <button data-view="assistant"><span class="ico">🤖</span> AI Assistant</button>
+        <button data-view="addons"><span class="ico">🧩</span> Add-ons</button>
+        <button data-view="events"><span class="ico">📅</span> Events</button>
+
+        <div class="nav-group">Workloads</div>
+        <button data-view="deployments"><span class="ico">🚀</span> Deployments</button>
+        <button data-view="pods"><span class="ico">📦</span> Pods</button>
+        <button data-view="helm"><span class="ico">⎈</span> Helm</button>
+        <button data-view="bulk"><span class="ico">⚡</span> Bulk Ops</button>
+
+        <div class="nav-group">Observability</div>
+        <button data-view="logs"><span class="ico">📜</span> Logs</button>
+        <button data-view="aggregate"><span class="ico">🔀</span> Aggregate Logs</button>
+
+        <div class="nav-group">Security</div>
+        <button data-view="secrets"><span class="ico">🔑</span> Secrets</button>
+        <button data-view="identities"><span class="ico">🪪</span> Identities</button>
+        <button data-view="serviceaccounts"><span class="ico">👤</span> Service Accounts</button>
+      </nav>
+    </aside>
+
+    <div class="main-wrap">
+      <header class="topbar">
+        <button id="sidebarToggle" class="icon-btn" title="Toggle menu">☰</button>
+
+        <div class="picker">
+          <label>Kubeconfig</label>
+          <select id="kubeconfigSelect" title="Select a kubeconfig file"></select>
+          <button id="kubeconfigBrowse" title="Enter a custom kubeconfig path">…</button>
+        </div>
+
+        <div class="picker">
+          <label>Context / Region</label>
+          <select id="contextSelect" title="Switch context (non-destructive)"></select>
+        </div>
+
+        <div class="picker">
+          <label>Namespace</label>
+          <select id="nsSelect"></select>
+        </div>
+
+        <div class="ctx" id="ctxInfo">connecting…</div>
+        <button id="refreshBtn" class="icon-btn" title="Refresh">⟳</button>
+      </header>
+
+      <div id="roBanner" class="ro-banner hidden">READ-ONLY mode — mutating actions are disabled.</div>
+
+      <main id="content"><div class="loading">Loading…</div></main>
+    </div>
+  </div>
+
+  <div id="modal" class="modal hidden">
+    <div class="modal-box">
+      <div class="modal-head">
+        <span id="modalTitle"></span>
+        <button id="modalClose">✕</button>
+      </div>
+      <div class="modal-tabs" id="modalTabs"></div>
+      <div class="modal-body" id="modalBody"></div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

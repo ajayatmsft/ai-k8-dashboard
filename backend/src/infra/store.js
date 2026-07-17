@@ -18,12 +18,12 @@
  */
 
 const fs = require('fs');
-const path = require('path');
 const { execFile } = require('child_process');
+const { INVESTIGATIONS_FILE } = require('../config');
 
 const PSQL = process.env.PSQL_PATH || 'psql';
 const DATABASE_URL = process.env.DATABASE_URL || '';
-const JSON_FILE = path.join(__dirname, '..', 'investigations.json');
+const JSON_FILE = INVESTIGATIONS_FILE;
 
 let mode = 'json'; // 'pg' | 'json'
 

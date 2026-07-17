@@ -1,19 +1,54 @@
 {
   "name": "k8s-local-dashboard",
   "version": "1.0.0",
-  "description": "Offline local Kubernetes dashboard with an AI-powered investigation assistant (root-cause analysis). Uses your local kubeconfig via kubectl. Zero npm dependencies.",
-  "private": true,
-  "bin": {
-    "k8s-dashboard": "server.js"
+  "description": "Offline, zero-dependency local Kubernetes dashboard to debug workloads: cluster health & memory-leak/crash detection, node pools & SKUs, live multi-pod logs, and an AI-powered root-cause assistant. Uses your local kubeconfig via kubectl.",
+  "keywords": [
+    "kubernetes",
+    "k8s",
+    "kubectl",
+    "dashboard",
+    "debugging",
+    "troubleshooting",
+    "sre",
+    "devops",
+    "aks",
+    "observability",
+    "memory-leak",
+    "oomkilled",
+    "crashloopbackoff",
+    "root-cause-analysis"
+  ],
+  "homepage": "https://github.com/your-org/k8s-local-dashboard#readme",
+  "bugs": {
+    "url": "https://github.com/your-org/k8s-local-dashboard/issues"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-org/k8s-local-dashboard.git"
+  },
+  "license": "MIT",
+  "author": "k8s-local-dashboard contributors",
+  "bin": {
+    "k8s-dashboard": "backend/server.js"
+  },
+  "files": [
+    "backend/",
+    "frontend/",
+    "scripts/",
+    "start.cmd",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
-    "start": "node server.js",
-    "dev": "node --watch server.js",
+    "start": "node backend/server.js",
+    "dev": "node --watch backend/server.js",
     "stop": "node scripts/stop.js",
-    "restart": "node scripts/stop.js && node server.js",
+    "restart": "node scripts/stop.js && node backend/server.js",
+    "test": "node --test backend/test/",
+    "check": "node scripts/check.js",
     "package": "node scripts/package.js"
   },
   "engines": {
-    "node": ">=16"
+    "node": ">=18"
   }
 }

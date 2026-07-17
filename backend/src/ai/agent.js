@@ -15,7 +15,7 @@
  *     heuristic RCA. Same output shape either way.
  */
 
-const heur = require('./investigation');
+const heur = require('../domain/heuristics');
 
 const STOPWORDS = new Set(['investigate', 'why', 'is', 'are', 'the', 'a', 'an', 'service',
   'failing', 'failed', 'down', 'unhealthy', 'pod', 'pods', 'deployment', 'deployments',

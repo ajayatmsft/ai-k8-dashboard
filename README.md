@@ -11,7 +11,36 @@ from many pods in one place.
 
 ## Features
 
-### 🤖 AI Investigation Assistant (new)
+### ❤️ Cluster Health — memory-leak & crash detection (new)
+A dedicated **Cluster Health** view that continuously grades your cluster and
+surfaces the two problems teams hit most: **memory leaks/OOM kills** and
+**crashes**.
+
+- **Health score + live gauges** – an at-a-glance 0–100 score plus cluster-wide
+  **CPU** and **memory** meters (from `kubectl top` + node allocatable).
+- **Memory-leak detection** – flags containers stuck in the classic
+  *grow → hit limit → OOMKill → restart* cycle (high memory-vs-limit ratio
+  combined with repeated `OOMKilled` restarts), and containers running with **no
+  memory limit** that can take a whole node down.
+- **Crash detection** – `CrashLoopBackOff`, frequent restarts, `ImagePullBackOff`,
+  and pod evictions, correlated with events.
+- **"What is using this node?"** – when a node is under memory pressure (e.g.
+  *"Node aks-… memory at 96%"*) the alert now lists the **top memory-consuming
+  pods/containers scheduled on that exact node**, each with its share of node
+  memory, and shows how much is workloads vs. kubelet/OS overhead.
+- **Down to the process** – a one-click **"Top processes"** action runs
+  `ps`/`top` (with a portable `/proc` fallback) **inside** the suspect container
+  and lists its processes sorted by resident memory (RSS). A process whose RSS
+  keeps growing across refreshes is your leak — **all without reading the code**.
+- **Top memory/CPU consumers** – ranked, with each container's usage vs its limit
+  so leak suspects are obvious.
+- **Fix, don't just find** – every issue comes with a **concrete suggested fix**
+  and one-click actions: jump to **previous-instance logs**, **Describe** the pod,
+  **restart** it, or hand it to the **AI assistant** for a deep root-cause dive.
+- The same analysis is exposed to the AI as a `getClusterHealth` tool, so
+  *"do we have a memory leak?"* is answered with real data.
+
+### 🤖 AI Investigation Assistant
 Ask in plain English — **"Investigate payment-service"**, **"Why is checkout
 failing?"**, **"Find pods restarting frequently"** — and an agent automatically
 gathers cluster state, correlates findings, and returns a **root-cause
@@ -21,8 +50,9 @@ searchable history.
 
 - **Tool-gated by design** — the AI never talks to Kubernetes directly. It can
   only call approved, validated tools (`getPods`, `getEvents`, `getLogs`,
-  `getPodMetrics`, `getHelmReleases`, `getClusterAddons`, `getServiceAccounts`,
-  `getPodIdentities`, …). The backend executes them and feeds results back.
+  `getPodMetrics`, `getClusterHealth`, `getNodePools`, `getHelmReleases`,
+  `getClusterAddons`, `getServiceAccounts`, `getPodIdentities`, …). The backend
+  executes them and feeds results back.
 - **Works offline too** — with no AI key configured, a built-in heuristic engine
   still diagnoses the common failure modes (CrashLoopBackOff, OOMKilled,
   ImagePullBackOff, failed probes, resource exhaustion, DB/connectivity errors).
@@ -33,6 +63,14 @@ searchable history.
 ### Browse & inspect
 - **Overview** – pod phases, container readiness, total restarts, and **node
   CPU/memory usage** (via `kubectl top`, shown when metrics-server is present).
+- **Node Pools** – node pools grouped with their **VM SKUs / instance types**,
+  AKS **System/User mode**, **availability zones**, OS/arch, aggregate CPU/memory
+  and ready counts. A per-node table shows SKU, zone, pod count and **taints**,
+  and each node opens a detail panel listing the exact **labels you'd use in a
+  `nodeSelector`**. A **"Node selectors in use"** section lists every workload
+  that pins itself via `nodeSelector`, **node affinity**, or **tolerations** — so
+  you can see which pool/SKU each service targets. Works across AKS, EKS, GKE and
+  Karpenter label conventions.
 - **Deployments** – ready/available replicas, images, age.
 - **Pods** – phase, ready, restarts, node, IP, age.
 - **⎈ Helm** – every **Helm release** in the cluster (name, namespace, revision,
@@ -55,6 +93,11 @@ searchable history.
 - **Secrets** – list keys, open one to **reveal decoded values** or view YAML.
 - **Events** – cluster events, warnings highlighted, newest first.
 - **Describe / YAML** – one click on any deployment or pod.
+
+> **Fluent UI** – navigation lives in a collapsible **left sidebar** grouped by
+> Cluster / Workloads / Observability / Security. Lists (Secrets, Pods,
+> Deployments, Events, Logs) now have **richer filters** — free-text plus
+> **namespace / type / phase** dropdowns — so you can zero in fast.
 
 ### Multi-cluster / multi-region
 - **Kubeconfig picker** – choose any kubeconfig discovered in `~/.kube`, or type
@@ -89,12 +132,19 @@ searchable history.
 
 ### Production hardening
 - **READ_ONLY mode** (`READ_ONLY=1`) disables every mutating action (restart,
-  scale, delete, exec, bulk ops) — safe to share with a wider team.
+  scale, delete, exec, bulk ops) **and redacts secret values** (keys stay
+  visible; secret YAML manifests are blocked) — safe to share with a wider team.
+- **EXEC_ENABLED=0** disables the debug shell independently of read-only mode.
+- **Bulk ops require a server-verified dry-run**: the execute call must present
+  the confirmation token returned by its own preview; if the matched set
+  changed in between, the server rejects it and asks for a fresh preview.
 - **Audit log** – every mutating action and secret view is appended to
   `audit.log` (timestamp, action, details).
 - Binds to **localhost only** by default.
 - Every kubectl call uses an argv array (never a shell string); all names,
   selectors, and regexes are validated, so UI input can't inject host commands.
+- The full API surface is documented in [API.md](API.md) and locked by tests
+  (`npm test`).
 
 ## Requirements
 
@@ -107,7 +157,7 @@ No `npm install`.
 
 ```powershell
 cd C:\Users\kumarajay\k8s-local-dashboard
-node server.js
+npm start          # or: node backend/server.js
 ```
 
 Or double-click **`start.cmd`**. Then open <http://127.0.0.1:7575>.
@@ -120,7 +170,10 @@ Or double-click **`start.cmd`**. Then open <http://127.0.0.1:7575>.
 | `HOST`         | `127.0.0.1`   | Bind address (localhost only by default)         |
 | `KUBECTL_PATH` | `kubectl`     | Full path to the kubectl binary                  |
 | `HELM_PATH`    | `helm`        | Full path to the helm binary (optional)          |
-| `READ_ONLY`    | `0`           | Set `1` to disable all mutating actions          |
+| `READ_ONLY`    | `0`           | Set `1` to disable all mutating actions (also redacts secret values) |
+| `EXEC_ENABLED` | `1`           | Set `0` to disable the debug shell / in-container process listing |
+| `CORS_ORIGIN`  | _(unset)_     | Allow a separately hosted frontend origin to call the API |
+| `DATA_DIR`     | repo root     | Where settings.json / audit.log / investigations.json live |
 
 #### AI Assistant configuration
 
@@ -147,13 +200,13 @@ references) — **never logs**. Two backends, chosen automatically:
 Example with OpenAI + PostgreSQL:
 
 ```powershell
-$env:OPENAI_API_KEY="sk-…"; $env:DATABASE_URL="postgres://user:pass@localhost:5432/k8sdash"; node server.js
+$env:OPENAI_API_KEY="sk-…"; $env:DATABASE_URL="postgres://user:pass@localhost:5432/k8sdash"; node backend/server.js
 ```
 
 Example (read-only, custom port):
 
 ```powershell
-$env:READ_ONLY=1; $env:PORT=8080; node server.js
+$env:READ_ONLY=1; $env:PORT=8080; node backend/server.js
 ```
 
 You can switch kubeconfig and context **inside the UI** — no need to set env
@@ -170,31 +223,54 @@ vars or run `kubectl config use-context`.
 
 ## How it works
 
-`server.js` (Node stdlib only) exposes a small JSON + SSE API under `/api/*`
-that shells out to `kubectl … -o json/yaml`, `kubectl logs -f`, `top`, `rollout
-restart`, `scale`, and `delete`. The browser app in `public/` renders everything
-client-side. Global `--kubeconfig`/`--context` flags are derived from the
-settings you pick in the UI.
+The repo is split into a **backend** and a **frontend** with a strict JSON +
+SSE API contract between them.
 
-## Files
+The backend (`backend/`, Node stdlib only) exposes the API under `/api/*` and
+shells out to `kubectl … -o json/yaml`, `kubectl logs -f`, `top`, `rollout
+restart`, `scale`, and `delete`. Global `--kubeconfig`/`--context` flags are
+derived from the settings you pick in the UI.
+
+The frontend (`frontend/`, vanilla JS, no build step) renders everything
+client-side. By default the backend serves it on the same port; it can also be
+hosted separately — set `window.K8S_DASH_API_BASE` before `app.js` loads and
+start the backend with `CORS_ORIGIN=<frontend origin>`.
+
+## Layout
 
 ```
-server.js            HTTP + SSE API, kubectl integration, audit, read-only gate
-lib/ai.js            Pluggable AI provider (OpenAI via stdlib https; Ollama; stubs)
-lib/tools.js         Tool registry — the only surface the agent can act through
-lib/agent.js         Agent orchestrator (bounded tool-calling loop + heuristic fallback)
-lib/investigation.js Heuristic detectors (CrashLoopBackOff, OOMKilled, probes, …)
-lib/db.js            Investigation metadata store (psql shell-out or JSON fallback)
-scripts/stop.js      kill whatever is listening on PORT (used by npm run stop)
-package.json
-start.cmd            Windows launcher (opens browser)
-settings.json        runtime state (gitignored): chosen kubeconfig/context/ns
-investigations.json  runtime history (gitignored) when no PostgreSQL configured
-audit.log            runtime audit trail (gitignored)
-public/index.html
-public/styles.css
-public/app.js        UI (vanilla JS, no build step) incl. AI Assistant tab
+backend/
+  server.js               entry point: wiring + startup logging only
+  src/config.js           every env var / tunable in one place (incl. DATA_DIR)
+  src/util.js             input validation, HTTP errors, formatting
+  src/settings.js         kubeconfig/context selection (settings.json)
+  src/infra/kubectl.js    kubectl + helm process runners (argv-only, no shell)
+  src/infra/audit.js      READ_ONLY gate + append-only audit.log
+  src/infra/store.js      investigation metadata store (psql shell-out or JSON)
+  src/domain/…            cluster analysis: health, heuristics, helm, addons,
+                          identity, nodes, pod resolution
+  src/ai/provider.js      pluggable AI provider (OpenAI via stdlib https; Ollama)
+  src/ai/tools.js         tool registry — the only surface the agent can act through
+  src/ai/agent.js         agent orchestrator (bounded tool loop + heuristic fallback)
+  src/ai/stack.js         builds registry + provider + store at startup
+  src/http/…              router, JSON/SSE responses + CORS, static serving
+  src/routes/…            thin API handlers: system, cluster, helm, security,
+                          logs (incl. SSE tail), ops, investigations (incl. SSE)
+frontend/
+  index.html, app.js, styles.css   UI incl. AI Assistant tab
+scripts/
+  check.js                syntax-check all backend+frontend files (npm run check)
+  stop.js                 kill whatever is listening on PORT (npm run stop)
+  package.js              build an offline zip (npm run package)
+start.cmd                 Windows launcher (opens browser)
+settings.json             runtime state (gitignored): chosen kubeconfig/context/ns
+investigations.json       runtime history (gitignored) when no PostgreSQL configured
+audit.log                 runtime audit trail (gitignored)
 ```
+
+Extra backend env vars introduced by the split: `DATA_DIR` (where runtime state
+files live; defaults to the repo root), `FRONTEND_DIR` (static files to serve),
+`CORS_ORIGIN` (allow a separately hosted frontend; off by default).
 
 
 

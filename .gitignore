@@ -1,5 +1,23 @@
+# Runtime state / secrets — never commit
 node_modules/
 *.log
+audit.log
 settings.json
+investigations.json
+.env
+.env.*
+!.env.example
+
+# Machine-specific registry config (backend has zero npm deps; ui/ is built on
+# an unrestricted machine — commit its lockfile only from there, generated
+# against the public registry).
+.npmrc
+
+# Build output
 dist/
+
+# Editors / OS
+.idea/
+.vscode/
 .DS_Store
+Thumbs.db

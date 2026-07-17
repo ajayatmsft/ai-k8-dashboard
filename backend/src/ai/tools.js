@@ -13,7 +13,8 @@
 
 function buildToolRegistry(ctx) {
   const { kubectl, kubectlJSON, nsArgs, validName, age, ensureWritable,
-    listHelmReleases, detectAddons, listServiceAccounts, listPodIdentities } = ctx;
+    listHelmReleases, detectAddons, listServiceAccounts, listPodIdentities,
+    gatherClusterHealth, listNodePools } = ctx;
 
   function reqName(label, v) {
     if (!validName(v)) { const e = new Error(`valid ${label} required`); e.status = 400; throw e; }
@@ -179,6 +180,24 @@ function buildToolRegistry(ctx) {
           });
           return { available: true, rows };
         } catch (e) { return { available: false, error: e.message, rows: [] }; }
+      },
+    },
+    {
+      name: 'getClusterHealth',
+      description: 'Assess cluster health for memory/CPU pressure, memory leaks, OOM kills, and crash loops. Returns a health score, per-node CPU/memory usage, the top memory/CPU consuming containers (with usage vs limit), and a ranked list of issues each with a concrete suggested fix. Use this first when the user asks about memory leaks, crashes, OOM, resource pressure, or overall cluster health.',
+      parameters: { type: 'object', properties: { namespace: { type: 'string', description: 'Namespace to scope to, or omit for the whole cluster.' } } },
+      async handler({ namespace } = {}) {
+        if (!gatherClusterHealth) return { error: 'cluster health analysis unavailable' };
+        return gatherClusterHealth({ ns: namespace });
+      },
+    },
+    {
+      name: 'getNodePools',
+      description: 'List node pools and their VM SKUs / instance types, along with every node (pool, SKU, OS, arch, zone, AKS mode System/User, CPU/memory capacity, pod count, taints, and the labels usable in a nodeSelector). Use when the user asks about node pools, node sizes/SKUs, instance types, zones, taints, or which nodes exist.',
+      parameters: { type: 'object', properties: {}, additionalProperties: false },
+      async handler() {
+        if (!listNodePools) return { error: 'node pool listing unavailable', pools: [], nodes: [] };
+        return listNodePools();
       },
     },
 

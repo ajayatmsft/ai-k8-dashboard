@@ -25,10 +25,10 @@ const baseName = `k8s-local-dashboard-${stamp}`;
 const INCLUDE = [
   'package.json',
   'README.md',
-  'server.js',
   'start.cmd',
   '.gitignore',
-  'public',
+  'backend',
+  'frontend',
   'scripts',
 ];
 // Optional siblings.
