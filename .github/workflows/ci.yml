@@ -16,4 +16,5 @@ jobs:
       - name: Syntax check (backend + frontend)
         run: node scripts/check.js
       - name: Tests
-        run: node --test backend/test/
+        # bash expands the glob — Node 22 no longer auto-discovers a bare directory arg
+        run: node --test backend/test/*.test.js

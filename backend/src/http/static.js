@@ -24,7 +24,17 @@ function serveStatic(req, res, pathname) {
   const file = path.join(FRONTEND_DIR, safe);
   if (!file.startsWith(FRONTEND_DIR)) { res.writeHead(403); res.end('Forbidden'); return; }
   fs.readFile(file, (err, data) => {
-    if (err) { res.writeHead(404); res.end('Not found'); return; }
+    if (err) {
+      // SPA fallback: extension-less paths are client-side routes — serve the app.
+      if (!path.extname(safe)) {
+        return fs.readFile(path.join(FRONTEND_DIR, 'index.html'), (err2, index) => {
+          if (err2) { res.writeHead(404); res.end('Not found'); return; }
+          res.writeHead(200, { 'Content-Type': MIME['.html'] });
+          res.end(index);
+        });
+      }
+      res.writeHead(404); res.end('Not found'); return;
+    }
     res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream' });
     res.end(data);
   });
