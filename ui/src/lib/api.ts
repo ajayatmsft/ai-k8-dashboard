@@ -114,6 +114,83 @@ export interface TopContainer {
   hasLimit: boolean
 }
 
+export interface DeploymentItem {
+  namespace: string
+  name: string
+  desired: number
+  ready: number
+  updated: number
+  available: number
+  age: string
+  images: string[]
+}
+
+export interface EventItem {
+  namespace: string
+  type: string
+  reason: string
+  object?: string
+  message?: string
+  count?: number
+  lastSeen?: string
+}
+
+export interface AggLogLine { pod: string; ns: string; line: string }
+
+export interface AggregateLogsResult {
+  pods: string[]
+  podCount?: number
+  capped?: boolean
+  lines: AggLogLine[]
+  truncated?: boolean
+}
+
+export interface AiStatus {
+  enabled: boolean
+  aiProvider: string | null
+  aiModel: string | null
+  aiConfigured: boolean
+  mode: 'agent' | 'heuristic'
+  readOnly: boolean
+  storage: { mode: string; warning?: string }
+  tools: Array<{ name: string; mutating: boolean }>
+}
+
+export interface AgentStep {
+  phase: string
+  message: string
+  tool?: string
+  args?: Record<string, unknown>
+}
+
+export interface InvestigateReport {
+  summary?: string
+  root_cause?: string
+  evidence?: string[]
+  suggested_fix?: string
+  confidence?: number
+  target?: string | null
+  namespace?: string | null
+  provider?: string
+  signals?: Array<{ code: string; severity: Severity; title: string }>
+  id?: string
+  created_at?: string
+}
+
+export interface InvestigationRow {
+  id: string
+  question: string
+  namespace?: string | null
+  target?: string | null
+  summary?: string
+  root_cause?: string
+  confidence?: number | null
+  evidence?: string[]
+  suggested_fix?: string
+  provider?: string
+  created_at?: string
+}
+
 export interface HealthReport {
   metricsAvailable: boolean
   generatedAt: string

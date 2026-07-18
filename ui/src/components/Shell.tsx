@@ -36,15 +36,15 @@ export const NAV: Array<{ group: string; items: NavItem[] }> = [
     group: 'Workloads',
     items: [
       { label: 'Pods', to: '/pods', icon: Boxes },
-      { label: 'Deployments', soon: true, icon: Layers },
+      { label: 'Deployments', to: '/deployments', icon: Layers },
     ],
   },
   {
     group: 'Observability',
     items: [
-      { label: 'Logs', soon: true, icon: ScrollText },
-      { label: 'Events', soon: true, icon: Bell },
-      { label: 'AI Investigate', soon: true, icon: Sparkles },
+      { label: 'Logs', to: '/logs', icon: ScrollText },
+      { label: 'Events', to: '/events', icon: Bell },
+      { label: 'AI Investigate', to: '/investigate', icon: Sparkles },
     ],
   },
   {
