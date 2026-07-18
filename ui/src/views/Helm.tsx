@@ -7,7 +7,7 @@ import { useOutletContext } from 'react-router-dom'
 import { api } from '@/lib/api'
 import type { ShellContext } from '@/components/Shell'
 import { Modal } from '@/components/Modal'
-import { Card, StatusPill, Spinner, ErrorBox, Empty, Th, Td } from '@/components/ui'
+import { StatusPill, Spinner, ErrorBox, Empty, Th, Td } from '@/components/ui'
 
 interface HelmItem {
   name: string
