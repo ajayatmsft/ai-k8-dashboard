@@ -127,14 +127,18 @@ mobile/CLI client build against a spec, not the code.
    action depends on exec; shared instances set `EXEC_ENABLED=0` or `READ_ONLY=1`),
    bulk execute requires the server-verified dry-run confirm token.
 
-### Phase 2 — Frontend rebuild (2–4 weeks)
-1. Scaffold Vite + React + TS + Tailwind + shadcn in `frontend/` (build-time deps
-   only; ships as static files — the Vite dev server proxies `/api` to the backend,
-   production build output is what the backend serves).
-2. Build in this order: shell + nav + command palette → Cluster Health → Pods/Deployments/
-   Events → Logs (aggregate + tail) → AI Investigation → settings/context switcher →
-   mutations + confirms.
-3. Until then the existing vanilla-JS frontend keeps working unchanged.
+### Phase 2 — Frontend rebuild — ✅ DONE (July 2026)
+React + TS + Tailwind v4 app in `ui/`, built by the `ui-build` GitHub Actions
+workflow (restricted machines download the `ui-dist` artifact and serve it via
+`FRONTEND_DIR`). All views at parity with the vanilla frontend: Health (landing,
+with Top-processes + Logs issue actions), Overview, Node Pools, Helm, Pods,
+Deployments, Bulk Ops (server-token dry-run flow), Logs (snapshot + SSE live
+tail), Events, AI Investigate (streaming), Secrets (redaction-aware), Identities,
+debug shell, describe/YAML modals, kubeconfig/context switcher, Ctrl+K palette.
+Remaining nice-to-have: the YAML apply/edit flow (vanilla-only for now).
+
+**Next structural step:** make the React bundle the default UI (ship `ui/dist`
+in releases / npm package), then retire `frontend/`.
 
 ### Phase 3 — Packaging & repo polish (1 week)
 1. Distribution: publish to npm so `npx <name>` just works (the killer install story —
