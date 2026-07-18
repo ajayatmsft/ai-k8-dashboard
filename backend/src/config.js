@@ -7,10 +7,21 @@
  * and defaults to the repo root so existing installs keep their data.
  */
 
+const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const DATA_DIR = process.env.DATA_DIR || ROOT;
+
+// UI resolution: prefer the built React app (ui/dist — shipped in releases and
+// the npm package; ui-dist — a downloaded CI artifact), fall back to the
+// legacy no-build frontend. FRONTEND_DIR always wins.
+function defaultFrontendDir() {
+  for (const dir of [path.join(ROOT, 'ui', 'dist'), path.join(ROOT, 'ui-dist')]) {
+    if (fs.existsSync(path.join(dir, 'index.html'))) return dir;
+  }
+  return path.join(ROOT, 'frontend');
+}
 
 module.exports = {
   HOST: process.env.HOST || '127.0.0.1',
@@ -31,7 +42,7 @@ module.exports = {
 
   ROOT,
   DATA_DIR,
-  FRONTEND_DIR: process.env.FRONTEND_DIR || path.join(ROOT, 'frontend'),
+  FRONTEND_DIR: process.env.FRONTEND_DIR || defaultFrontendDir(),
   SETTINGS_FILE: path.join(DATA_DIR, 'settings.json'),
   AUDIT_FILE: path.join(DATA_DIR, 'audit.log'),
   INVESTIGATIONS_FILE: path.join(DATA_DIR, 'investigations.json'),

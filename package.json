@@ -1,6 +1,6 @@
 {
   "name": "k8s-local-dashboard",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Offline, zero-dependency local Kubernetes dashboard to debug workloads: cluster health & memory-leak/crash detection, node pools & SKUs, live multi-pod logs, and an AI-powered root-cause assistant. Uses your local kubeconfig via kubectl.",
   "keywords": [
     "kubernetes",
@@ -18,13 +18,13 @@
     "crashloopbackoff",
     "root-cause-analysis"
   ],
-  "homepage": "https://github.com/your-org/k8s-local-dashboard#readme",
+  "homepage": "https://github.com/ajayatmsft/ai-k8-dashboard#readme",
   "bugs": {
-    "url": "https://github.com/your-org/k8s-local-dashboard/issues"
+    "url": "https://github.com/ajayatmsft/ai-k8-dashboard/issues"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/your-org/k8s-local-dashboard.git"
+    "url": "git+https://github.com/ajayatmsft/ai-k8-dashboard.git"
   },
   "license": "MIT",
   "author": "k8s-local-dashboard contributors",
@@ -33,11 +33,12 @@
   },
   "files": [
     "backend/",
-    "frontend/",
+    "ui/dist/",
     "scripts/",
     "start.cmd",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "API.md"
   ],
   "scripts": {
     "start": "node backend/server.js",
@@ -46,7 +47,9 @@
     "restart": "node scripts/stop.js && node backend/server.js",
     "test": "node --test backend/test/",
     "check": "node scripts/check.js",
-    "package": "node scripts/package.js"
+    "package": "node scripts/package.js",
+    "fetch-ui": "node scripts/fetch-ui.js",
+    "prepack": "node -e \"require('fs').accessSync('ui/dist/index.html')\" || (echo 'ui/dist missing — build the UI first (cd ui && npm run build)' && exit 1)"
   },
   "engines": {
     "node": ">=18"

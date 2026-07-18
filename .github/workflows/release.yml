@@ -1,0 +1,62 @@
+name: Release
+
+# Tag vX.Y.Z → run tests, build the React UI, assemble the offline zip, create
+# a GitHub Release, and (if an NPM_TOKEN secret is configured) publish to npm.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Backend checks + tests
+        run: |
+          node scripts/check.js
+          node --test backend/test/*.test.js
+
+      - name: Build UI
+        working-directory: ui
+        run: |
+          npm ci
+          npm run build
+
+      - name: Assemble release zip
+        run: |
+          STAGE=$(mktemp -d)/k8s-dashboard-${GITHUB_REF_NAME}
+          mkdir -p "$STAGE"
+          cp -r backend scripts start.cmd package.json README.md LICENSE API.md "$STAGE/"
+          mkdir -p "$STAGE/ui"
+          cp -r ui/dist "$STAGE/ui/dist"
+          (cd "$(dirname "$STAGE")" && zip -qr "$GITHUB_WORKSPACE/k8s-dashboard-${GITHUB_REF_NAME}.zip" "$(basename "$STAGE")")
+          echo "Zip contents:" && unzip -l "k8s-dashboard-${GITHUB_REF_NAME}.zip" | head -20
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "k8s-dashboard-${GITHUB_REF_NAME}.zip" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes
+
+      - name: Publish to npm (only when NPM_TOKEN secret is set)
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NPM_TOKEN" ]; then
+            echo "NPM_TOKEN not configured — skipping npm publish."
+            exit 0
+          fi
+          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
+          npm publish --access public

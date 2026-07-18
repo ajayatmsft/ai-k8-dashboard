@@ -140,12 +140,20 @@ Remaining nice-to-have: the YAML apply/edit flow (vanilla-only for now).
 **Next structural step:** make the React bundle the default UI (ship `ui/dist`
 in releases / npm package), then retire `frontend/`.
 
-### Phase 3 — Packaging & repo polish (1 week)
-1. Distribution: publish to npm so `npx <name>` just works (the killer install story —
-   zero runtime deps means npx adds nothing to install); GitHub Releases zip via
-   `npm run package` for offline machines; optional single-binary builds later with
-   Node's Single Executable Application support.
-2. `start.cmd` / `start.sh` wrappers for double-click users.
+### Phase 3 — Packaging & repo polish (in progress)
+1. ✅ React bundle is the shipped default: backend auto-serves `ui/dist` /
+   `ui-dist`, falling back to the legacy frontend; `npm run fetch-ui` pulls the
+   CI build on npm-restricted machines.
+2. ✅ Release pipeline: pushing a `vX.Y.Z` tag runs tests, builds the UI,
+   attaches an offline zip to a GitHub Release, and publishes to npm when an
+   `NPM_TOKEN` repo secret exists (`.github/workflows/release.yml`).
+   `prepack` guard blocks publishing without a built UI.
+3. ✅ README rewritten as a landing page (leak-detection hero + quickstart).
+   TODO: record the demo GIF (health issue → Top processes → leaking process).
+4. ⬜ DECIDE THE NAME (blocks npm publish): check availability on npm + GitHub
+   + .dev domain, then rename package.json#name and the repo.
+5. ⬜ First tag: `git tag v2.0.0 && git push origin v2.0.0` (after name).
+6. Later: single-binary builds via Node SEA; `start.sh` for mac/linux double-click.
 3. README rewritten as a landing page: one screenshot GIF above the fold
    (the memory-leak → top-processes flow), 60-second quickstart, feature sections.
 4. Record that GIF (the "find the leaking process without reading code" demo).

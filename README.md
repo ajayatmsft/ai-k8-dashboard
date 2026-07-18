@@ -1,13 +1,39 @@
 # K8s Local Dashboard
 
-A tiny, **offline**, team-grade web dashboard for Kubernetes clusters. It uses
-your existing **local kubeconfig** through the `kubectl` binary already on your
-machine — **no internet connection required** and **no npm dependencies** to
-install.
+**Find the memory leak. Down to the process. Without reading the code.**
 
-Point it at any cluster your kubeconfig can reach (local kind/minikube/k3s, or a
-remote cluster), switch contexts/regions on the fly, debug pods, and tail logs
-from many pods in one place.
+A tiny, **offline-first** Kubernetes debug dashboard that runs from a single
+`node` command. It talks to any cluster your kubeconfig can reach through the
+`kubectl` binary already on your machine — **zero runtime dependencies, no
+internet required, nothing installed in your cluster**.
+
+It continuously grades cluster health, detects OOM-kill/leak cycles and crash
+loops, attributes node memory pressure to the exact pods causing it, and — one
+click later — lists the **processes inside the suspect container sorted by
+RSS**. An AI investigation assistant (works offline with built-in heuristics;
+plug in OpenAI or a local Ollama for the full agent) turns "why is checkout
+failing?" into a structured root-cause analysis.
+
+<!-- TODO(launch): demo GIF here — health issue → “Top processes” → leaking
+     process identified. This is the landing shot. -->
+
+## Quickstart
+
+```bash
+# Prerequisites: Node 18+ and kubectl on PATH (kubectl get pods works)
+
+# Option A — from a GitHub release (offline-friendly)
+#   download the zip from the Releases page, unzip, then:
+node backend/server.js
+
+# Option B — from a clone
+git clone https://github.com/ajayatmsft/ai-k8-dashboard.git && cd ai-k8-dashboard
+npm run fetch-ui     # grabs the pre-built UI from CI (needs gh CLI) — no npm install ever
+npm start
+```
+
+Open <http://127.0.0.1:7575>. Switch kubeconfig/context from the UI — nothing
+on your machine is modified.
 
 ## Features
 
@@ -148,19 +174,20 @@ searchable history.
 
 ## Requirements
 
-- [Node.js](https://nodejs.org) 16+ (`node -v`).
+- [Node.js](https://nodejs.org) 18+ (`node -v`).
 - `kubectl` on your PATH, configured for your cluster (`kubectl get pods` works).
 
-No `npm install`.
+No `npm install`. The backend is Node stdlib only; the React UI ships pre-built
+(`ui/dist` in releases, or `npm run fetch-ui` from a clone). Without a built UI
+the legacy no-build frontend in `frontend/` is served instead — same features.
 
 ## Run
 
 ```powershell
-cd C:\Users\kumarajay\k8s-local-dashboard
 npm start          # or: node backend/server.js
 ```
 
-Or double-click **`start.cmd`**. Then open <http://127.0.0.1:7575>.
+Or double-click **`start.cmd`** (Windows). Then open <http://127.0.0.1:7575>.
 
 ### Configuration (environment variables)
 
@@ -231,10 +258,11 @@ shells out to `kubectl … -o json/yaml`, `kubectl logs -f`, `top`, `rollout
 restart`, `scale`, and `delete`. Global `--kubeconfig`/`--context` flags are
 derived from the settings you pick in the UI.
 
-The frontend (`frontend/`, vanilla JS, no build step) renders everything
-client-side. By default the backend serves it on the same port; it can also be
-hosted separately — set `window.K8S_DASH_API_BASE` before `app.js` loads and
-start the backend with `CORS_ORIGIN=<frontend origin>`.
+The frontend is a React + TypeScript + Tailwind app in `ui/`, built by CI and
+served as static files by the backend (the backend auto-detects `ui/dist` or a
+downloaded `ui-dist`, falling back to the legacy no-build `frontend/`). It can
+also be hosted separately — start the backend with
+`CORS_ORIGIN=<frontend origin>`.
 
 ## Layout
 
@@ -256,10 +284,14 @@ backend/
   src/http/…              router, JSON/SSE responses + CORS, static serving
   src/routes/…            thin API handlers: system, cluster, helm, security,
                           logs (incl. SSE tail), ops, investigations (incl. SSE)
+ui/
+  src/                    React + TS + Tailwind app (views, components, typed API client)
+  dist/                   built bundle (CI artifact; what the backend serves)
 frontend/
-  index.html, app.js, styles.css   UI incl. AI Assistant tab
+  index.html, app.js, styles.css   legacy no-build UI (fallback when ui/dist absent)
 scripts/
   check.js                syntax-check all backend+frontend files (npm run check)
+  fetch-ui.js             download the CI-built React bundle (npm run fetch-ui)
   stop.js                 kill whatever is listening on PORT (npm run stop)
   package.js              build an offline zip (npm run package)
 start.cmd                 Windows launcher (opens browser)
