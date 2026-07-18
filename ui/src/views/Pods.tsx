@@ -3,12 +3,15 @@
  * palette) as the initial filter.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useOutletContext, useSearchParams } from 'react-router-dom'
-import { RefreshCw } from 'lucide-react'
-import { api } from '@/lib/api'
+import type { ReactNode } from 'react'
+import { useNavigate, useOutletContext, useSearchParams } from 'react-router-dom'
+import { RefreshCw, ScrollText, FileText, Trash2 } from 'lucide-react'
+import { api, post } from '@/lib/api'
 import type { PodItem } from '@/lib/api'
 import type { ShellContext } from '@/components/Shell'
 import { StatusPill, Spinner, ErrorBox, Empty, Th, Td } from '@/components/ui'
+import { DetailModal } from '@/components/Modal'
+import { showToast } from '@/components/toast'
 import { cn } from '@/lib/utils'
 
 function phaseTone(phase: string): 'good' | 'warning' | 'critical' | 'muted' {
@@ -19,12 +22,14 @@ function phaseTone(phase: string): 'good' | 'warning' | 'critical' | 'muted' {
 }
 
 export function Pods() {
-  const { ns } = useOutletContext<ShellContext>()
+  const { ns, readOnly } = useOutletContext<ShellContext>()
+  const navigate = useNavigate()
   const [params] = useSearchParams()
   const [items, setItems] = useState<PodItem[]>([])
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState(params.get('q') ?? '')
+  const [detail, setDetail] = useState<PodItem | null>(null)
 
   const load = useCallback(() => {
     setError('')
@@ -43,6 +48,17 @@ export function Pods() {
       (p.node || '').toLowerCase().includes(q) || p.phase.toLowerCase().includes(q),
     )
   }, [items, filter])
+
+  const deletePod = async (p: PodItem) => {
+    if (!window.confirm(`Delete pod ${p.namespace}/${p.name}? Its controller will recreate it.`)) return
+    try {
+      await post('deletePod', { ns: p.namespace, pod: p.name })
+      showToast(`Deleted ${p.name}`)
+      load()
+    } catch (e) {
+      showToast((e as Error).message, 'err')
+    }
+  }
 
   if (loading && items.length === 0 && !error) return <Spinner text="Loading pods…" />
   if (error) return <ErrorBox error={error} onRetry={load} />
@@ -73,7 +89,7 @@ export function Pods() {
           <table className="w-full border-collapse text-[13px]">
             <thead>
               <tr className="border-b border-line">
-                <Th>Namespace</Th><Th>Name</Th><Th>Phase</Th><Th>Ready</Th><Th>Restarts</Th><Th>Node</Th><Th>IP</Th><Th>Age</Th>
+                <Th>Namespace</Th><Th>Name</Th><Th>Phase</Th><Th>Ready</Th><Th>Restarts</Th><Th>Node</Th><Th>IP</Th><Th>Age</Th><Th />
               </tr>
             </thead>
             <tbody>
@@ -91,12 +107,51 @@ export function Pods() {
                   <Td mono className="max-w-44 truncate text-ink-2">{p.node || ''}</Td>
                   <Td mono className="text-ink-2">{p.podIP || ''}</Td>
                   <Td className="text-ink-2">{p.age}</Td>
+                  <Td>
+                    <div className="flex gap-1">
+                      <RowBtn title="Aggregate logs" onClick={() => navigate(`/logs?ns=${encodeURIComponent(p.namespace)}&regex=${encodeURIComponent(p.name)}`)}>
+                        <ScrollText className="size-3" />
+                      </RowBtn>
+                      <RowBtn title="Describe / YAML" onClick={() => setDetail(p)}>
+                        <FileText className="size-3" />
+                      </RowBtn>
+                      {!readOnly && (
+                        <RowBtn title="Delete pod (controller recreates it)" onClick={() => deletePod(p)} danger>
+                          <Trash2 className="size-3" />
+                        </RowBtn>
+                      )}
+                    </div>
+                  </Td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       )}
+
+      {detail && (
+        <DetailModal target={{ type: 'pod', ns: detail.namespace, name: detail.name }} onClose={() => setDetail(null)} />
+      )}
     </div>
+  )
+}
+
+function RowBtn({ children, title, onClick, danger }: {
+  children: ReactNode
+  title: string
+  onClick: () => void
+  danger?: boolean
+}) {
+  return (
+    <button
+      title={title}
+      onClick={onClick}
+      className={cn(
+        'rounded border border-line bg-raised p-1 text-ink-2 hover:text-ink',
+        danger && 'hover:border-critical/40 hover:text-critical',
+      )}
+    >
+      {children}
+    </button>
   )
 }

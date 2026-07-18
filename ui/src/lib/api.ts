@@ -191,6 +191,92 @@ export interface InvestigationRow {
   created_at?: string
 }
 
+export interface OverviewResult {
+  totalPods: number
+  phases: Record<string, number>
+  restarts: number
+  containersReady: number
+  containersTotal: number
+  nodes: Array<{
+    name: string
+    ready: boolean
+    version?: string
+    usage: { cpu: string; cpuPct: string; mem: string; memPct: string } | null
+  }>
+  metrics: boolean
+}
+
+export interface PoolSummary {
+  name: string
+  mode: string
+  count: number
+  ready: number
+  skus: string[]
+  zones: string[]
+  os: string[]
+  arch: string[]
+  totalCpu: string
+  totalMemory: string
+}
+
+export interface PoolNode {
+  name: string
+  pool: string
+  sku: string
+  os: string
+  osSku: string
+  arch: string
+  region: string
+  zone: string
+  mode: string
+  ready: boolean
+  kubelet?: string
+  cpu: string
+  memory: string
+  pods: number
+  maxPods: string | number
+  taints: string[]
+  labels: Record<string, string>
+  age: string
+}
+
+export interface SchedulingItem {
+  namespace: string
+  name: string
+  kind: string
+  nodeSelector: Record<string, string>
+  affinity: string[]
+  tolerations: string[]
+}
+
+export interface NodePoolsResult { pools: PoolSummary[]; nodes: PoolNode[]; scheduling: SchedulingItem[] }
+
+export interface SecretItem { namespace: string; name: string; type: string; keys: string[]; age: string }
+export interface SecretDetail {
+  name: string
+  namespace: string
+  type?: string
+  data: Record<string, string>
+  redacted?: boolean
+}
+
+export interface BulkMatched { kind?: string; namespace: string; name: string }
+export interface BulkOpResult {
+  dryRun: boolean
+  matched?: BulkMatched[]
+  confirmToken?: string
+  restarted?: Array<BulkMatched & { ok: boolean; error?: string }>
+  deleted?: Array<{ namespace: string; name: string; ok: boolean; error?: string }>
+}
+
+export interface SetConfigResult {
+  ok: boolean
+  settings: { kubeconfig: string; context: string; namespace: string }
+  context: string
+  server: string
+  error: string
+}
+
 export interface HealthReport {
   metricsAvailable: boolean
   generatedAt: string

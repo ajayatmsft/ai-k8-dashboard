@@ -7,14 +7,16 @@ import { useEffect, useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import {
   HeartPulse, LayoutDashboard, Server, Boxes, Layers, ScrollText, Bell,
-  Sparkles, KeyRound, Fingerprint, Command as CommandIcon,
+  Sparkles, KeyRound, Fingerprint, Command as CommandIcon, Settings, Wand2,
 } from 'lucide-react'
 import { api } from '@/lib/api'
 import type { AppConfig, NamespaceItem } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { CommandPalette } from '@/components/CommandPalette'
+import { SettingsModal } from '@/components/SettingsModal'
+import { Toasts } from '@/components/toast'
 
-export interface ShellContext { ns: string }
+export interface ShellContext { ns: string; readOnly: boolean; execEnabled: boolean }
 
 interface NavItem {
   label: string
@@ -28,8 +30,8 @@ export const NAV: Array<{ group: string; items: NavItem[] }> = [
     group: 'Cluster',
     items: [
       { label: 'Health', to: '/', icon: HeartPulse },
-      { label: 'Overview', soon: true, icon: LayoutDashboard },
-      { label: 'Node Pools', soon: true, icon: Server },
+      { label: 'Overview', to: '/overview', icon: LayoutDashboard },
+      { label: 'Node Pools', to: '/nodepools', icon: Server },
     ],
   },
   {
@@ -37,6 +39,7 @@ export const NAV: Array<{ group: string; items: NavItem[] }> = [
     items: [
       { label: 'Pods', to: '/pods', icon: Boxes },
       { label: 'Deployments', to: '/deployments', icon: Layers },
+      { label: 'Bulk Ops', to: '/bulk', icon: Wand2 },
     ],
   },
   {
@@ -50,7 +53,7 @@ export const NAV: Array<{ group: string; items: NavItem[] }> = [
   {
     group: 'Security',
     items: [
-      { label: 'Secrets', soon: true, icon: KeyRound },
+      { label: 'Secrets', to: '/secrets', icon: KeyRound },
       { label: 'Identities', soon: true, icon: Fingerprint },
     ],
   },
@@ -61,6 +64,7 @@ export function Shell() {
   const [namespaces, setNamespaces] = useState<NamespaceItem[]>([])
   const [ns, setNs] = useState<string>('_all')
   const [paletteOpen, setPaletteOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
 
   useEffect(() => {
     api<AppConfig>('config').then(setConfig).catch(() => setConfig(null))
@@ -150,14 +154,22 @@ export function Shell() {
               READ-ONLY
             </span>
           )}
-          <div className="ml-auto" />
+          <button
+            onClick={() => setSettingsOpen(true)}
+            title="Cluster connection (kubeconfig / context)"
+            className="ml-auto rounded p-1.5 text-ink-3 hover:bg-raised hover:text-ink"
+          >
+            <Settings className="size-4" />
+          </button>
         </header>
         <main className="min-h-0 flex-1 overflow-y-auto p-4">
-          <Outlet context={{ ns } satisfies ShellContext} />
+          <Outlet context={{ ns, readOnly: config?.readOnly ?? false, execEnabled: config?.execEnabled ?? false } satisfies ShellContext} />
         </main>
       </div>
 
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      {settingsOpen && config && <SettingsModal config={config} onClose={() => setSettingsOpen(false)} />}
+      <Toasts />
     </div>
   )
 }

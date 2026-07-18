@@ -4,20 +4,23 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useOutletContext } from 'react-router-dom'
-import { RefreshCw, ScrollText } from 'lucide-react'
-import { api } from '@/lib/api'
+import { RefreshCw, ScrollText, FileText, RotateCw, Scaling } from 'lucide-react'
+import { api, post } from '@/lib/api'
 import type { DeploymentItem } from '@/lib/api'
 import type { ShellContext } from '@/components/Shell'
 import { StatusPill, Spinner, ErrorBox, Empty, Th, Td } from '@/components/ui'
+import { DetailModal } from '@/components/Modal'
+import { showToast } from '@/components/toast'
 import { cn } from '@/lib/utils'
 
 export function Deployments() {
-  const { ns } = useOutletContext<ShellContext>()
+  const { ns, readOnly } = useOutletContext<ShellContext>()
   const navigate = useNavigate()
   const [items, setItems] = useState<DeploymentItem[]>([])
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('')
+  const [detail, setDetail] = useState<DeploymentItem | null>(null)
 
   const load = useCallback(() => {
     setError('')
@@ -33,6 +36,31 @@ export function Deployments() {
     if (!q) return items
     return items.filter((d) => d.name.toLowerCase().includes(q) || d.namespace.toLowerCase().includes(q))
   }, [items, filter])
+
+  const restart = async (d: DeploymentItem) => {
+    if (!window.confirm(`Rolling restart of ${d.namespace}/${d.name}?`)) return
+    try {
+      await post('restart', { ns: d.namespace, name: d.name })
+      showToast(`Restarting ${d.name}`)
+      load()
+    } catch (e) {
+      showToast((e as Error).message, 'err')
+    }
+  }
+
+  const scale = async (d: DeploymentItem) => {
+    const v = window.prompt(`Scale ${d.namespace}/${d.name} to how many replicas?`, String(d.desired))
+    if (v == null) return
+    const replicas = parseInt(v, 10)
+    if (!Number.isInteger(replicas) || replicas < 0 || replicas > 1000) { showToast('Replicas must be 0–1000', 'err'); return }
+    try {
+      await post('scale', { ns: d.namespace, name: d.name, replicas })
+      showToast(`Scaled ${d.name} to ${replicas}`)
+      load()
+    } catch (e) {
+      showToast((e as Error).message, 'err')
+    }
+  }
 
   if (loading && items.length === 0 && !error) return <Spinner text="Loading deployments…" />
   if (error) return <ErrorBox error={error} onRetry={load} />
@@ -79,13 +107,40 @@ export function Deployments() {
                     <Td className="text-ink-2">{d.age}</Td>
                     <Td mono className="max-w-72 truncate text-[11px] text-ink-3" >{d.images.join(', ')}</Td>
                     <Td>
-                      <button
-                        onClick={() => navigate(`/logs?ns=${encodeURIComponent(d.namespace)}&regex=${encodeURIComponent(d.name)}`)}
-                        className="flex items-center gap-1 rounded border border-line bg-raised px-2 py-0.5 text-[11px] text-ink-2 hover:text-ink"
-                        title="Aggregate logs for this deployment's pods"
-                      >
-                        <ScrollText className="size-3" /> Logs
-                      </button>
+                      <div className="flex gap-1">
+                        <button
+                          onClick={() => navigate(`/logs?ns=${encodeURIComponent(d.namespace)}&regex=${encodeURIComponent(d.name)}`)}
+                          className="rounded border border-line bg-raised p-1 text-ink-2 hover:text-ink"
+                          title="Aggregate logs for this deployment's pods"
+                        >
+                          <ScrollText className="size-3" />
+                        </button>
+                        <button
+                          onClick={() => setDetail(d)}
+                          className="rounded border border-line bg-raised p-1 text-ink-2 hover:text-ink"
+                          title="Describe / YAML"
+                        >
+                          <FileText className="size-3" />
+                        </button>
+                        {!readOnly && (
+                          <>
+                            <button
+                              onClick={() => restart(d)}
+                              className="rounded border border-line bg-raised p-1 text-ink-2 hover:border-warning/40 hover:text-warning"
+                              title="Rolling restart"
+                            >
+                              <RotateCw className="size-3" />
+                            </button>
+                            <button
+                              onClick={() => scale(d)}
+                              className="rounded border border-line bg-raised p-1 text-ink-2 hover:text-ink"
+                              title="Scale replicas"
+                            >
+                              <Scaling className="size-3" />
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </Td>
                   </tr>
                 )
@@ -93,6 +148,10 @@ export function Deployments() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {detail && (
+        <DetailModal target={{ type: 'deployment', ns: detail.namespace, name: detail.name }} onClose={() => setDetail(null)} />
       )}
     </div>
   )

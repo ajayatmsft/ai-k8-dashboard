@@ -9,6 +9,10 @@ import { Deployments } from '@/views/Deployments'
 import { Events } from '@/views/Events'
 import { Logs } from '@/views/Logs'
 import { Investigate } from '@/views/Investigate'
+import { Overview } from '@/views/Overview'
+import { NodePools } from '@/views/NodePools'
+import { Secrets } from '@/views/Secrets'
+import { BulkOps } from '@/views/BulkOps'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
@@ -21,6 +25,10 @@ createRoot(document.getElementById('root')!).render(
           <Route path="events" element={<Events />} />
           <Route path="logs" element={<Logs />} />
           <Route path="investigate" element={<Investigate />} />
+          <Route path="overview" element={<Overview />} />
+          <Route path="nodepools" element={<NodePools />} />
+          <Route path="secrets" element={<Secrets />} />
+          <Route path="bulk" element={<BulkOps />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>
