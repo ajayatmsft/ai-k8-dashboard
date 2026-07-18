@@ -13,6 +13,8 @@ import { Overview } from '@/views/Overview'
 import { NodePools } from '@/views/NodePools'
 import { Secrets } from '@/views/Secrets'
 import { BulkOps } from '@/views/BulkOps'
+import { Identities } from '@/views/Identities'
+import { Helm } from '@/views/Helm'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
@@ -29,6 +31,8 @@ createRoot(document.getElementById('root')!).render(
           <Route path="nodepools" element={<NodePools />} />
           <Route path="secrets" element={<Secrets />} />
           <Route path="bulk" element={<BulkOps />} />
+          <Route path="identities" element={<Identities />} />
+          <Route path="helm" element={<Helm />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>

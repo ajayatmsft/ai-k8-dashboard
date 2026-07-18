@@ -7,7 +7,7 @@ import { useEffect, useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import {
   HeartPulse, LayoutDashboard, Server, Boxes, Layers, ScrollText, Bell,
-  Sparkles, KeyRound, Fingerprint, Command as CommandIcon, Settings, Wand2,
+  Sparkles, KeyRound, Fingerprint, Command as CommandIcon, Settings, Wand2, Package,
 } from 'lucide-react'
 import { api } from '@/lib/api'
 import type { AppConfig, NamespaceItem } from '@/lib/api'
@@ -32,6 +32,7 @@ export const NAV: Array<{ group: string; items: NavItem[] }> = [
       { label: 'Health', to: '/', icon: HeartPulse },
       { label: 'Overview', to: '/overview', icon: LayoutDashboard },
       { label: 'Node Pools', to: '/nodepools', icon: Server },
+      { label: 'Helm', to: '/helm', icon: Package },
     ],
   },
   {
@@ -54,7 +55,7 @@ export const NAV: Array<{ group: string; items: NavItem[] }> = [
     group: 'Security',
     items: [
       { label: 'Secrets', to: '/secrets', icon: KeyRound },
-      { label: 'Identities', soon: true, icon: Fingerprint },
+      { label: 'Identities', to: '/identities', icon: Fingerprint },
     ],
   },
 ]

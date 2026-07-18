@@ -4,12 +4,13 @@
  * attribution, and top consumers.
  */
 import { useCallback, useEffect, useState } from 'react'
-import { useOutletContext } from 'react-router-dom'
-import { RefreshCw } from 'lucide-react'
+import { useNavigate, useOutletContext } from 'react-router-dom'
+import { RefreshCw, ScrollText, Activity } from 'lucide-react'
 import { api } from '@/lib/api'
 import type { HealthReport, HealthIssue, TopContainer, Severity } from '@/lib/api'
 import type { ShellContext } from '@/components/Shell'
 import { Card, SevPill, StatusPill, Meter, Spinner, ErrorBox, Empty, Th, Td } from '@/components/ui'
+import { TopProcessesModal } from '@/components/ExecModal'
 import { cn } from '@/lib/utils'
 
 export function ClusterHealth() {
@@ -144,7 +145,11 @@ export function ClusterHealth() {
 }
 
 function IssueRow({ issue }: { issue: HealthIssue }) {
+  const { readOnly, execEnabled } = useOutletContext<ShellContext>()
+  const navigate = useNavigate()
+  const [procs, setProcs] = useState(false)
   const target = [issue.namespace, issue.pod, issue.container].filter(Boolean).join(' / ') || issue.node
+
   return (
     <li className="rounded-md border border-line bg-raised/40 p-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -157,6 +162,24 @@ function IssueRow({ issue }: { issue: HealthIssue }) {
         <span className="font-semibold text-accent">Fix: </span>
         <span className="text-ink-2">{issue.fix}</span>
       </p>
+      {issue.pod && (
+        <div className="mt-2 flex gap-1.5">
+          {execEnabled && !readOnly && issue.container && (
+            <button onClick={() => setProcs(true)}
+              className="flex items-center gap-1 rounded border border-line bg-surface px-2 py-1 text-[11px] text-ink-2 hover:border-accent hover:text-ink">
+              <Activity className="size-3" /> Top processes
+            </button>
+          )}
+          <button
+            onClick={() => navigate(`/logs?ns=${encodeURIComponent(issue.namespace ?? '_all')}&regex=${encodeURIComponent(issue.pod ?? '')}`)}
+            className="flex items-center gap-1 rounded border border-line bg-surface px-2 py-1 text-[11px] text-ink-2 hover:border-accent hover:text-ink">
+            <ScrollText className="size-3" /> Logs
+          </button>
+        </div>
+      )}
+      {procs && issue.pod && (
+        <TopProcessesModal ns={issue.namespace ?? 'default'} pod={issue.pod} container={issue.container} onClose={() => setProcs(false)} />
+      )}
     </li>
   )
 }

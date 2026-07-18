@@ -5,12 +5,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { useNavigate, useOutletContext, useSearchParams } from 'react-router-dom'
-import { RefreshCw, ScrollText, FileText, Trash2 } from 'lucide-react'
+import { RefreshCw, ScrollText, FileText, Trash2, Terminal } from 'lucide-react'
 import { api, post } from '@/lib/api'
 import type { PodItem } from '@/lib/api'
 import type { ShellContext } from '@/components/Shell'
 import { StatusPill, Spinner, ErrorBox, Empty, Th, Td } from '@/components/ui'
 import { DetailModal } from '@/components/Modal'
+import { ExecShellModal } from '@/components/ExecModal'
 import { showToast } from '@/components/toast'
 import { cn } from '@/lib/utils'
 
@@ -22,7 +23,7 @@ function phaseTone(phase: string): 'good' | 'warning' | 'critical' | 'muted' {
 }
 
 export function Pods() {
-  const { ns, readOnly } = useOutletContext<ShellContext>()
+  const { ns, readOnly, execEnabled } = useOutletContext<ShellContext>()
   const navigate = useNavigate()
   const [params] = useSearchParams()
   const [items, setItems] = useState<PodItem[]>([])
@@ -30,6 +31,7 @@ export function Pods() {
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState(params.get('q') ?? '')
   const [detail, setDetail] = useState<PodItem | null>(null)
+  const [shell, setShell] = useState<PodItem | null>(null)
 
   const load = useCallback(() => {
     setError('')
@@ -115,6 +117,11 @@ export function Pods() {
                       <RowBtn title="Describe / YAML" onClick={() => setDetail(p)}>
                         <FileText className="size-3" />
                       </RowBtn>
+                      {execEnabled && (
+                        <RowBtn title="Debug shell (audited)" onClick={() => setShell(p)}>
+                          <Terminal className="size-3" />
+                        </RowBtn>
+                      )}
                       {!readOnly && (
                         <RowBtn title="Delete pod (controller recreates it)" onClick={() => deletePod(p)} danger>
                           <Trash2 className="size-3" />
@@ -131,6 +138,9 @@ export function Pods() {
 
       {detail && (
         <DetailModal target={{ type: 'pod', ns: detail.namespace, name: detail.name }} onClose={() => setDetail(null)} />
+      )}
+      {shell && (
+        <ExecShellModal ns={shell.namespace} pod={shell.name} containers={shell.containers} onClose={() => setShell(null)} />
       )}
     </div>
   )
