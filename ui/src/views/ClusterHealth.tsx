@@ -9,7 +9,7 @@ import { RefreshCw, ScrollText, Activity } from 'lucide-react'
 import { api } from '@/lib/api'
 import type { HealthReport, HealthIssue, TopContainer, Severity } from '@/lib/api'
 import type { ShellContext } from '@/components/Shell'
-import { Card, SevPill, StatusPill, Meter, Spinner, ErrorBox, Empty, Th, Td } from '@/components/ui'
+import { Card, SevPill, StatusPill, Meter, ScoreRing, Spinner, ErrorBox, Empty, Th, Td } from '@/components/ui'
 import { TopProcessesModal } from '@/components/ExecModal'
 import { cn } from '@/lib/utils'
 
@@ -44,16 +44,13 @@ export function ClusterHealth() {
       {/* headline row */}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
         <Card className="md:col-span-1">
-          <div className="flex items-baseline gap-2">
-            <span className={cn('text-4xl font-bold tabular-nums', {
-              good: 'text-good', warning: 'text-warning', critical: 'text-critical',
-            }[gradeTone])}>
-              {report.score}
-            </span>
-            <span className="text-ink-3">/ 100</span>
+          <div className="flex items-center gap-3">
+            <ScoreRing score={report.score} />
+            <div className="min-w-0">
+              <StatusPill kind={gradeTone}>{report.grade}</StatusPill>
+              <p className="mt-2 text-xs leading-relaxed text-ink-2">{report.summary}</p>
+            </div>
           </div>
-          <div className="mt-1"><StatusPill kind={gradeTone}>{report.grade}</StatusPill></div>
-          <p className="mt-2 text-xs leading-relaxed text-ink-2">{report.summary}</p>
         </Card>
         <Card title="Cluster CPU">
           <Meter pct={report.cluster.cpuPct} />
@@ -149,9 +146,12 @@ function IssueRow({ issue }: { issue: HealthIssue }) {
   const navigate = useNavigate()
   const [procs, setProcs] = useState(false)
   const target = [issue.namespace, issue.pod, issue.container].filter(Boolean).join(' / ') || issue.node
+  const edge = {
+    critical: 'border-l-critical', high: 'border-l-serious', medium: 'border-l-warning', low: 'border-l-line',
+  }[issue.severity]
 
   return (
-    <li className="rounded-md border border-line bg-raised/40 p-3">
+    <li className={cn('rounded-lg border border-l-4 border-line bg-raised/40 p-3 transition-colors hover:bg-raised/70', edge)}>
       <div className="flex flex-wrap items-center gap-2">
         <SevPill sev={issue.severity} />
         <span className="font-semibold">{issue.title}</span>

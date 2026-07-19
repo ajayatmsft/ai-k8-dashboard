@@ -18,7 +18,7 @@ export function Modal({ title, onClose, children }: { title: ReactNode; onClose:
   return (
     <div className="fixed inset-0 z-40 flex items-start justify-center bg-black/50 p-6 pt-[8vh]" onMouseDown={onClose}>
       <div
-        className="flex max-h-[80vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-line bg-surface shadow-2xl"
+        className="modal-pop flex max-h-[80vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-2xl shadow-black/50"
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-line px-4 py-2.5">
