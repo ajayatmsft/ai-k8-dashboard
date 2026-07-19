@@ -1,94 +1,92 @@
 @import "tailwindcss";
 
 /*
- * Design tokens — bold dark theme. A deep-space navy base with vivid gradient
- * accents and per-section identity hues. Status colors (good/warning/serious/
- * critical) are the validated palette, reserved for state and always paired
- * with a text label.
+ * Design tokens — Grafana-style dark theme. Near-black warm background, flat
+ * panels with thin borders, orange brand, blue actions, and Grafana's
+ * threshold palette for state (always paired with a text label).
  */
 @theme {
-  --color-bg: #0b0d14;
-  --color-surface: #12141d;
-  --color-raised: #1b1e2b;
-  --color-line: #272b3d;
-  --color-ink: #eceef6;
-  --color-ink-2: #a6abc4;
-  --color-ink-3: #6b7089;
+  --color-bg: #111217;
+  --color-surface: #181b1f;
+  --color-raised: #22252b;
+  --color-line: #2c3235;
+  --color-ink: #d8d9da;
+  --color-ink-2: #9da5b8;
+  --color-ink-3: #6e7480;
 
-  --color-accent: #7c9aff;
-  --color-accent-2: #b07cff;
-  --color-cyan: #22d3ee;
-  --color-violet: #a78bfa;
-  --color-pink: #f472b6;
-  --color-sky: #7dd3fc;
+  --color-brand: #ff8833;      /* Grafana orange — identity only */
+  --color-brand-2: #f55f3e;
+  --color-accent: #5794f2;     /* links / focus */
+  --color-action: #3d71d9;     /* primary buttons */
 
-  --color-good: #22c55e;
-  --color-warning: #fab219;
-  --color-serious: #ec835a;
-  --color-critical: #ef4444;
+  --color-good: #73bf69;
+  --color-warning: #fade2a;
+  --color-serious: #ff9830;
+  --color-critical: #f2495c;
 
-  --font-sans: ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+  --font-sans: "Inter", ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
   --font-mono: ui-monospace, "Cascadia Code", Consolas, monospace;
 }
 
 html, body, #root { height: 100%; }
 body {
-  background:
-    radial-gradient(1200px 600px at 85% -10%, rgba(124, 154, 255, 0.09), transparent 60%),
-    radial-gradient(900px 500px at -10% 110%, rgba(176, 124, 255, 0.07), transparent 60%),
-    var(--color-bg);
+  background: var(--color-bg);
   color: var(--color-ink);
   font-family: var(--font-sans);
   font-size: 13px;
 }
 
-::selection { background: rgba(124, 154, 255, 0.35); }
+::selection { background: rgba(87, 148, 242, 0.35); }
 
-::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-thumb { background: var(--color-raised); border-radius: 5px; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: var(--color-raised); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--color-line); }
 ::-webkit-scrollbar-track { background: transparent; }
 
-/* --- motion ---------------------------------------------------------------- */
+/* --- motion (snappy, minimal) ---------------------------------------------- */
 
 @keyframes fade-up {
-  from { opacity: 0; transform: translateY(6px); }
+  from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: none; }
 }
 @keyframes pop-in {
-  from { opacity: 0; transform: scale(0.97); }
+  from { opacity: 0; transform: scale(0.985); }
   to { opacity: 1; transform: none; }
 }
 @keyframes ring-in {
   from { stroke-dashoffset: 260; }
 }
-.view-enter { animation: fade-up 0.25s ease-out both; }
-.modal-pop { animation: pop-in 0.16s ease-out both; }
-.ring-anim { animation: ring-in 0.9s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.view-enter { animation: fade-up 0.15s ease-out both; }
+.modal-pop { animation: pop-in 0.12s ease-out both; }
+.ring-anim { animation: ring-in 0.7s cubic-bezier(0.22, 1, 0.36, 1) both; }
 
 @media (prefers-reduced-motion: reduce) {
   .view-enter, .modal-pop, .ring-anim { animation: none; }
 }
 
-/* --- shared flourishes ----------------------------------------------------- */
+/* --- shared ---------------------------------------------------------------- */
 
+/* Brand gradient — logo/wordmark only, Grafana flame orange. */
 .text-gradient {
-  background: linear-gradient(120deg, var(--color-accent), var(--color-accent-2));
+  background: linear-gradient(120deg, var(--color-brand-2), var(--color-brand));
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
 }
-.btn-primary {
-  background: linear-gradient(120deg, var(--color-accent), var(--color-accent-2));
-  color: #0b0d14;
-  font-weight: 600;
-  transition: filter 0.15s, transform 0.1s;
+.bg-brand-gradient {
+  background: linear-gradient(135deg, var(--color-brand-2), var(--color-brand));
 }
-.btn-primary:hover { filter: brightness(1.12); }
-.btn-primary:active { transform: translateY(1px); }
 
-.card-lift { transition: border-color 0.15s, transform 0.15s, box-shadow 0.15s; }
-.card-lift:hover {
-  border-color: rgba(124, 154, 255, 0.35);
-  box-shadow: 0 4px 24px -8px rgba(124, 154, 255, 0.15);
+/* Primary action button — Grafana blue, flat. */
+.btn-primary {
+  background: var(--color-action);
+  color: #fff;
+  font-weight: 500;
+  transition: background 0.1s;
 }
+.btn-primary:hover { background: #4a80e0; }
+.btn-primary:active { background: #3665c4; }
+
+/* Panels: flat; hover only lightens the border (no lift, no glow). */
+.card-lift { transition: border-color 0.1s; }
+.card-lift:hover { border-color: #3b4248; }

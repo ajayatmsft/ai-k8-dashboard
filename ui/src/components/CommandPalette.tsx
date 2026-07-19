@@ -62,7 +62,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
   return (
     <div className="fixed inset-0 z-50 bg-black/50 pt-[18vh]" onMouseDown={onClose}>
       <div
-        className="modal-pop mx-auto w-full max-w-lg overflow-hidden rounded-2xl border border-accent/30 bg-surface shadow-2xl shadow-accent/10"
+        className="modal-pop mx-auto w-full max-w-lg overflow-hidden rounded-lg border border-line bg-surface shadow-2xl shadow-black/50"
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2 border-b border-line px-3">
